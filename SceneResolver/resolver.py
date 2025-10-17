@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from itertools import count
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -113,9 +113,78 @@ def _associate_people(resolved: List[Tuple[str, PersonObservation]], alias: Opti
     return alias
 
 
+def _parse_timestamp(value: Optional[object]) -> Optional[datetime]:
+    """Best-effort ISO8601 parser that normalises to naive UTC datetimes."""
+
+    if not value or not isinstance(value, str):
+        return None
+
+    text = value.strip()
+    if not text:
+        return None
+
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _max_clip_offset_seconds(clip: GeminiClip) -> float:
+    offsets: List[float] = []
+    for obj in clip.objects:
+        if obj.pick_time_s > 0:
+            offsets.append(obj.pick_time_s)
+        if obj.place_time_s > 0:
+            offsets.append(obj.place_time_s)
+    if clip.audio and clip.audio.utterances:
+        offsets.extend(
+            utterance.end_s
+            for utterance in clip.audio.utterances
+            if utterance.end_s > 0
+        )
+
+    duration = clip.metadata.get("duration_s") if isinstance(clip.metadata, dict) else None
+    if isinstance(duration, (int, float)) and duration > 0:
+        offsets.append(float(duration))
+
+    return max(offsets) if offsets else 0.0
+
+
+def _clip_time_bounds(
+    clip: GeminiClip,
+    default_start: datetime,
+) -> Tuple[datetime, Optional[datetime]]:
+    """Determine an approximate start/end time for a clip."""
+
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    start_time = _parse_timestamp(metadata.get("started_at")) if metadata else None
+    end_time = _parse_timestamp(metadata.get("ended_at")) if metadata else None
+
+    if start_time:
+        return start_time, end_time
+
+    if end_time:
+        max_offset = _max_clip_offset_seconds(clip)
+        if max_offset > 0:
+            return end_time - timedelta(seconds=max_offset), end_time
+        return end_time, end_time
+
+    return default_start, None
+
+
 def _parse_clip(state: Dict[str, object]) -> Dict[str, object]:
     clip = GeminiClip.model_validate(state["raw_clip"])
-    return {"clip": clip}
+    payload = {"clip": clip}
+    if "ingested_at" in state:
+        payload["ingested_at"] = state["ingested_at"]
+    return payload
 
 
 def _load_state(_: Dict[str, object]) -> Dict[str, object]:
@@ -136,7 +205,25 @@ def _build_events(state: Dict[str, object]) -> Dict[str, object]:
     clip: GeminiClip = state["clip"]
     resolved: List[Tuple[str, PersonObservation]] = state.get("resolved_people", [])
     events: List[Event] = []
-    base_time = datetime.utcnow()
+    ingested_at: datetime = state.get("ingested_at", datetime.utcnow())
+    clip_start, clip_end = _clip_time_bounds(clip, ingested_at)
+    last_timestamp: Optional[datetime] = None
+
+    def next_timestamp(offset: Optional[float]) -> datetime:
+        nonlocal last_timestamp
+
+        timestamp = clip_start
+        if offset is not None:
+            timestamp = clip_start + timedelta(seconds=max(offset, 0.0))
+        elif last_timestamp is not None:
+            timestamp = last_timestamp + timedelta(microseconds=1_000)
+
+        if last_timestamp and timestamp <= last_timestamp:
+            timestamp = last_timestamp + timedelta(microseconds=1_000)
+
+        last_timestamp = timestamp
+        return timestamp
+
     sequence = 0
 
     for identity, person in resolved:
@@ -146,7 +233,7 @@ def _build_events(state: Dict[str, object]) -> Dict[str, object]:
             events.append(
                 Event(
                     event_id=event_id,
-                    timestamp=base_time,
+                    timestamp=next_timestamp(None),
                     clip_id=clip.clip_id,
                     room=clip.room,
                     actor=identity,
@@ -156,51 +243,67 @@ def _build_events(state: Dict[str, object]) -> Dict[str, object]:
                 )
             )
             sequence += 1
-            base_time = base_time + timedelta(microseconds=1_000)
 
     for obj in clip.objects:
         holder = _associate_people(resolved, obj.picked_by)
         if obj.picked_by:
             event_id = f"{clip.clip_id}:{obj.name}:picked:{sequence}"
             description = f"{holder or obj.picked_by} picked {obj.name}"
+            offset = obj.pick_time_s if obj.pick_time_s > 0 else None
+            details = {
+                "object": obj.name,
+                "picked_by": obj.picked_by,
+            }
+            if offset is not None:
+                details["clip_time_offset_s"] = offset
             events.append(
                 Event(
                     event_id=event_id,
-                    timestamp=base_time,
+                    timestamp=next_timestamp(offset),
                     clip_id=clip.clip_id,
                     room=clip.room,
                     actor=holder,
                     action="picked",
                     description=description,
-                    details={"object": obj.name, "picked_by": obj.picked_by},
+                    details=details,
                 )
             )
             sequence += 1
-            base_time = base_time + timedelta(microseconds=1_000)
         if obj.placed_at:
             event_id = f"{clip.clip_id}:{obj.name}:placed:{sequence}"
             description = f"{holder or obj.picked_by or 'Someone'} placed {obj.name} at {obj.placed_at}"
+            # Determine offset favouring explicit placement time, falling back to pick time
+            offset = None
+            if obj.place_time_s > 0:
+                offset = obj.place_time_s
+            elif obj.pick_time_s > 0:
+                offset = obj.pick_time_s
+            details = {
+                "object": obj.name,
+                "placed_at": obj.placed_at,
+            }
+            if offset is not None:
+                details["clip_time_offset_s"] = offset
             events.append(
                 Event(
                     event_id=event_id,
-                    timestamp=base_time,
+                    timestamp=next_timestamp(offset),
                     clip_id=clip.clip_id,
                     room=clip.room,
                     actor=holder,
                     action="placed",
                     description=description,
-                    details={"object": obj.name, "placed_at": obj.placed_at},
+                    details=details,
                 )
             )
             sequence += 1
-            base_time = base_time + timedelta(microseconds=1_000)
         if obj.exited_with:
             event_id = f"{clip.clip_id}:{obj.name}:exited:{sequence}"
             description = f"{holder or obj.picked_by or 'Someone'} exited with {obj.name}"
             events.append(
                 Event(
                     event_id=event_id,
-                    timestamp=base_time,
+                    timestamp=next_timestamp(None),
                     clip_id=clip.clip_id,
                     room=clip.room,
                     actor=holder,
@@ -210,9 +313,13 @@ def _build_events(state: Dict[str, object]) -> Dict[str, object]:
                 )
             )
             sequence += 1
-            base_time = base_time + timedelta(microseconds=1_000)
 
-    return {"events": events}
+    clip_end_time = clip_end or last_timestamp or clip_start
+    return {
+        "events": events,
+        "clip_start_time": clip_start,
+        "clip_end_time": clip_end_time,
+    }
 
 
 def _update_world(state: Dict[str, object]) -> Dict[str, object]:
@@ -220,7 +327,14 @@ def _update_world(state: Dict[str, object]) -> Dict[str, object]:
     scene_state: SceneState = state["scene_state"]
     resolved: List[Tuple[str, PersonObservation]] = state.get("resolved_people", [])
     events: List[Event] = state.get("events", [])
-    timestamp = datetime.utcnow().isoformat()
+    timestamp_dt: Optional[datetime] = state.get("clip_end_time")
+    if timestamp_dt is None:
+        timestamp_dt = _parse_timestamp(clip.metadata.get("ended_at")) if isinstance(clip.metadata, dict) else None
+    if timestamp_dt is None and events:
+        timestamp_dt = max(event.timestamp for event in events)
+    if timestamp_dt is None:
+        timestamp_dt = state.get("ingested_at", datetime.utcnow())
+    timestamp = timestamp_dt.isoformat()
 
     for identity, person in resolved:
         person_entry = scene_state.world_state.persons.setdefault(identity, {})
@@ -290,7 +404,10 @@ _INGEST_GRAPH = _build_graph()
 def ingest(gemini_json: Dict[str, object]) -> SceneState:
     """Public entry point to ingest Gemini JSON into the scene state."""
 
-    state: Dict[str, object] = {"raw_clip": gemini_json}
+    state: Dict[str, object] = {
+        "raw_clip": gemini_json,
+        "ingested_at": datetime.utcnow(),
+    }
     result = _INGEST_GRAPH(state)
     scene_state: SceneState = result["scene_state"]
     return scene_state
