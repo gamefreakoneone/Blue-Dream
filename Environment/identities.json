@@ -1,4 +1,4 @@
 {
-  "Amogh": { "top": ["blue jacket", "blue hoodie"], "bottom": ["black jeans"], "notes": ["glasses optional"] },
-  "Riya":  { "top": ["red sweater"], "bottom": ["blue jeans"], "notes": [] }
+  "Amogh": { "top": ["blue jacket", "blue hoodie"], "bottom": ["black jeans"], "notes": ["glasses"] },
+  // "Horse Man":  { "top": ["red sweater"], "bottom": ["blue jeans"], "notes": [] }
 }
