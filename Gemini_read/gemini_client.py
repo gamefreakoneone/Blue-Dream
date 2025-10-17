@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import os
 import time
-from typing import Dict
+from pathlib import Path
+from typing import Dict, Optional
 
 from google import genai
 
@@ -15,8 +16,49 @@ except ImportError:  # pragma: no cover - optional dependency
     load_dotenv = None  # type: ignore
 
 
-_POLL_INTERVAL_SECONDS = 5
-_MODEL_NAME = "gemini-2.0-flash"
+_POLL_INTERVAL_SECONDS = 3
+_MODEL_NAME = "gemini-2.5-flash"
+_PROMPT = """Instruct: Return one JSON object only matching this schema:
+
+{
+  "clip_id": "string",
+  "room": "A|B",
+  "summary": "string",
+  "people": [
+    {
+      "pid_hint": "string",
+      "appearance": { "top": "string", "bottom": "string", "shoes": "string", "others": "string|null" },
+      "activities": ["entered","picked","placed","exited","carry","handoff"]
+    }
+  ],
+  "objects": [
+    {
+      "name": "string",
+      "picked_by": "string|null",
+      "pick_time_s": 0.0,
+      "placed_at": "string|null",
+      "place_time_s": 0.0,
+      "exited_with": false,
+      "uncertain": false
+    }
+  ],
+  "audio": {
+    "present": true,
+    "transcript": "string",
+    "utterances": [ { "start_s": 0.0, "end_s": 0.0, "text": "string" } ]
+  }
+}
+
+
+Rules:
+
+Use clear appearance descriptors (colors/patterns).
+
+If no audio track, set audio.present=false and omit transcript.
+
+Prefer zones like desk_left, shelf, door if obvious; else set uncertain:true."""
+
+_CLIENT: Optional[genai.Client] = None
 
 
 def _ensure_api_key() -> str:
@@ -29,6 +71,14 @@ def _ensure_api_key() -> str:
             "API_KEY environment variable is required to use the Gemini client."
         )
     return api_key
+
+
+def _get_client() -> genai.Client:
+    global _CLIENT
+    if _CLIENT is None:
+        api_key = _ensure_api_key()
+        _CLIENT = genai.Client(api_key=api_key)
+    return _CLIENT
 
 
 def _strip_code_fences(payload: str) -> str:
@@ -57,11 +107,12 @@ def analyze_clip(clip_path: str, clip_id: str, room: str) -> Dict:
         Parsed JSON response from Gemini augmented with clip metadata.
     """
 
-    if not os.path.exists(clip_path):
+    clip_path = str(clip_path)
+    path = Path(clip_path)
+    if not path.exists():
         raise FileNotFoundError(f"Clip does not exist: {clip_path}")
 
-    api_key = _ensure_api_key()
-    client = genai.Client(api_key=api_key)
+    client = _get_client()
 
     uploaded_file = client.files.upload(file=clip_path)
 
@@ -73,28 +124,9 @@ def analyze_clip(clip_path: str, clip_id: str, room: str) -> Dict:
     if state_name != "ACTIVE":
         raise RuntimeError(f"File upload failed with state: {state_name}")
 
-    strict_prompt = f"""
-You are an assistant that analyzes short security camera clips.
-Return a strict JSON object with the following structure:
-{{
-  "clip_id": string,
-  "room": string,
-  "summary": string,
-  "actions": [string],
-  "notable_events": [
-    {{"timestamp": string, "description": string}}
-  ]
-}}
-Use ISO 8601 timestamps or relative offsets if exact times are unavailable.
-Clip metadata:
-- clip_id: {clip_id}
-- room: {room}
-Respond with JSON only.
-""".strip()
-
     response = client.models.generate_content(
         model=_MODEL_NAME,
-        contents=[uploaded_file, strict_prompt],
+        contents=[uploaded_file, _PROMPT],
     )
 
     if not getattr(response, "text", "").strip():

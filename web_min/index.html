@@ -78,7 +78,7 @@
             headers: {
               'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ prompt })
+            body: JSON.stringify({ question: prompt })
           });
 
           if (!response.ok) {
@@ -87,7 +87,14 @@
           }
 
           const data = await response.json();
-          document.getElementById('answer').textContent = data.answer ?? '(No answer returned)';
+          const answerLines = [];
+          if (data.answer) {
+            answerLines.push(data.answer);
+          }
+          if (Array.isArray(data.citations) && data.citations.length > 0) {
+            answerLines.push(`Citations: ${data.citations.join(', ')}`);
+          }
+          document.getElementById('answer').textContent = answerLines.join('\n') || '(No answer returned)';
           if (data.state) {
             document.getElementById('state').textContent = JSON.stringify(data.state, null, 2);
           }

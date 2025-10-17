@@ -20,6 +20,7 @@ class CameraSettings:
     """Settings describing a camera input."""
 
     name: str
+    room: str
     source: str
     width: Optional[int] = None
     height: Optional[int] = None
@@ -33,6 +34,7 @@ class CaptureSettings:
     output_dir: Path
     transcripts_dir: Path
     yolo_model_path: Path
+    state_path: Path
     chunk_seconds: float = 10.0
     grace_no_person_ms: int = 5_000
     min_person_confidence: float = 0.25
@@ -82,53 +84,79 @@ def _maybe_float(value: Optional[str]) -> Optional[float]:
 
 def _resolve_camera_names(raw: Optional[str]) -> List[str]:
     if not raw:
-        return ["cam0", "cam1"]
+        return ["camA", "camB"]
     names = [name.strip() for name in raw.split(",") if name.strip()]
-    return names or ["cam0", "cam1"]
+    return names or ["camA", "camB"]
+
+
+def _parse_downscale(raw: Optional[str]) -> int:
+    if not raw:
+        return 480
+    value = raw.strip().lower()
+    if value.endswith("p"):
+        value = value[:-1]
+    try:
+        return int(value)
+    except ValueError:
+        return 480
 
 
 def load_config() -> Config:
     """Load the capture configuration from environment variables."""
 
     camera_names = _resolve_camera_names(os.getenv("CAMERA_NAMES"))
+    default_rooms = ["A", "B"]
 
     cameras: List[CameraSettings] = []
-    for index, name in enumerate(camera_names):
-        env_name = name.upper()
+    global_fps = _maybe_float(os.getenv("FPS"))
+    for index, room in enumerate(default_rooms):
+        name = camera_names[index] if index < len(camera_names) else f"cam{room}"
+        env_room = room.upper()
         source = (
-            os.getenv(f"{env_name}_SOURCE")
-            or os.getenv(f"CAMERA_{env_name}_SOURCE")
+            os.getenv(f"CAMERA_{env_room}")
+            or os.getenv(f"{env_room}")
+            or os.getenv(f"{name.upper()}_SOURCE")
+            or os.getenv(f"CAMERA_{name.upper()}_SOURCE")
             or str(index)
         )
         width = _maybe_int(
-            os.getenv(f"{env_name}_WIDTH")
-            or os.getenv(f"CAMERA_{env_name}_WIDTH")
+            os.getenv(f"CAMERA_{env_room}_WIDTH")
+            or os.getenv(f"{env_room}_WIDTH")
+            or os.getenv(f"{name.upper()}_WIDTH")
         )
         height = _maybe_int(
-            os.getenv(f"{env_name}_HEIGHT")
-            or os.getenv(f"CAMERA_{env_name}_HEIGHT")
+            os.getenv(f"CAMERA_{env_room}_HEIGHT")
+            or os.getenv(f"{env_room}_HEIGHT")
+            or os.getenv(f"{name.upper()}_HEIGHT")
         )
         fps = _maybe_float(
-            os.getenv(f"{env_name}_FPS")
-            or os.getenv(f"CAMERA_{env_name}_FPS")
+            os.getenv(f"CAMERA_{env_room}_FPS")
+            or os.getenv(f"{env_room}_FPS")
+            or os.getenv(f"{name.upper()}_FPS")
         )
         cameras.append(
             CameraSettings(
                 name=name,
-                source=source,
+                room=room,
+                source=str(source),
                 width=width,
                 height=height,
-                fps=fps,
+                fps=fps or global_fps,
             )
         )
 
-    output_dir = Path(os.getenv("CAPTURE_OUTPUT_DIR", "captures"))
-    transcripts_dir = Path(os.getenv("TRANSCRIPTS_DIR", "transcripts"))
-    yolo_model_path = Path(os.getenv("YOLO_MODEL_PATH", "yolo11n.pt"))
-    chunk_seconds = float(os.getenv("CHUNK_SECONDS", "10"))
-    grace_ms = int(os.getenv("GRACE_NO_PERSON_MS", "5000"))
-    min_conf = float(os.getenv("PERSON_CONFIDENCE_THRESHOLD", "0.25"))
-    downscale_height = int(os.getenv("DOWNSCALE_HEIGHT", "480"))
+    data_dir = Path(os.getenv("DATA_DIR", "./data")).expanduser()
+    output_dir = Path(os.getenv("CLIPS_DIR", data_dir / "clips")).expanduser()
+    transcripts_dir = Path(
+        os.getenv("TRANSCRIPTS_DIR", data_dir / "transcripts")
+    ).expanduser()
+    state_path = Path(os.getenv("STATE_PATH", data_dir / "state.json")).expanduser()
+    yolo_model_path = Path(os.getenv("YOLO_MODEL_PATH", "yolo11n.pt")).expanduser()
+
+    chunk_seconds = float(os.getenv("CHUNK_SECONDS", "60"))
+    grace_ms = int(os.getenv("GRACE_NO_PERSON_MS", "2000"))
+    min_conf = float(os.getenv("DETECTION_CONF", "0.5"))
+    downscale_height = _parse_downscale(os.getenv("DOWNSCALE", "480p"))
     enable_audio = _read_bool(os.getenv("ENABLE_AUDIO"))
     audio_rate = int(os.getenv("AUDIO_SAMPLE_RATE", "16000"))
     audio_channels = int(os.getenv("AUDIO_CHANNELS", "1"))
@@ -136,11 +164,13 @@ def load_config() -> Config:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     transcripts_dir.mkdir(parents=True, exist_ok=True)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
 
     capture_settings = CaptureSettings(
         output_dir=output_dir,
         transcripts_dir=transcripts_dir,
         yolo_model_path=yolo_model_path,
+        state_path=state_path,
         chunk_seconds=chunk_seconds,
         grace_no_person_ms=grace_ms,
         min_person_confidence=min_conf,

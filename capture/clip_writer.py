@@ -51,12 +51,17 @@ class ClipWriter:
         camera_names: Iterable[str],
         default_fps: float = 30.0,
         downscale_height: int = 480,
+        camera_rooms: Optional[Mapping[str, str]] = None,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.transcripts_dir = Path(transcripts_dir)
         self.camera_names = list(camera_names)
         self.default_fps = default_fps
         self.downscale_height = downscale_height
+        self.camera_rooms = {
+            name: (camera_rooms.get(name) if camera_rooms else name)
+            for name in self.camera_names
+        }
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.transcripts_dir.mkdir(parents=True, exist_ok=True)
@@ -222,40 +227,63 @@ class ClipWriter:
             except OSError:
                 _LOGGER.debug("Failed to remove raw clip %s", raw_path, exc_info=True)
 
-        analysis_payload = {
-            "clip_id": context.clip_id,
-            "videos": {name: str(path) for name, path in final_paths.items()},
-            "metadata": context.metadata,
-        }
-
-        if not analysis_payload["videos"]:
+        if not final_paths:
             _LOGGER.warning("No video produced for clip %s; skipping analysis", context.clip_id)
             return final_paths
 
-        analysis_result = None
         if gemini_client is not None:
-            try:
-                analysis_result = gemini_client.analyze_clip(**analysis_payload)
-            except Exception:  # pragma: no cover - external service failure
-                _LOGGER.exception("Gemini analysis failed for clip %s", context.clip_id)
+            for camera_name, final_path in final_paths.items():
+                room = self.camera_rooms.get(camera_name, camera_name)
+                clip_identifier = f"{context.clip_id}_{room}"
+                try:
+                    analysis_result = gemini_client.analyze_clip(
+                        str(final_path), clip_identifier, str(room)
+                    )
+                except Exception:  # pragma: no cover - external service failure
+                    _LOGGER.exception(
+                        "Gemini analysis failed for clip %s camera %s",
+                        context.clip_id,
+                        camera_name,
+                    )
+                    continue
+
+                if isinstance(analysis_result, Mapping):
+                    merged = dict(context.metadata)
+                    if metadata:
+                        merged.update(metadata)
+                    merged.setdefault("camera_name", camera_name)
+                    merged.setdefault("room", str(room))
+                    analysis_result["metadata"] = merged
+
+                if scene_resolver is not None and isinstance(analysis_result, Mapping):
+                    try:
+                        scene_resolver.ingest(analysis_result)
+                    except Exception:  # pragma: no cover - external service failure
+                        _LOGGER.exception(
+                            "Scene resolver ingestion failed for clip %s camera %s",
+                            context.clip_id,
+                            camera_name,
+                        )
+                elif scene_resolver is None:
+                    _LOGGER.debug(
+                        "Scene resolver unavailable; skipping ingest for clip %s camera %s",
+                        context.clip_id,
+                        camera_name,
+                    )
+
+                transcript = _extract_transcript(analysis_result)
+                if transcript:
+                    transcript_path = self.transcripts_dir / f"{clip_identifier}.txt"
+                    try:
+                        transcript_path.write_text(transcript.strip() + "\n", encoding="utf-8")
+                    except OSError:  # pragma: no cover - filesystem failure
+                        _LOGGER.exception(
+                            "Failed to write transcript for clip %s camera %s",
+                            context.clip_id,
+                            camera_name,
+                        )
         else:
             _LOGGER.debug("Gemini client is unavailable; skipping analysis")
-
-        if analysis_result is not None and scene_resolver is not None:
-            try:
-                scene_resolver.ingest(analysis_result)
-            except Exception:  # pragma: no cover - external service failure
-                _LOGGER.exception("Scene resolver ingestion failed for clip %s", context.clip_id)
-        elif scene_resolver is None:
-            _LOGGER.debug("Scene resolver unavailable; skipping ingest for clip %s", context.clip_id)
-
-        transcript = _extract_transcript(analysis_result)
-        if transcript:
-            transcript_path = self.transcripts_dir / f"{context.clip_id}.txt"
-            try:
-                transcript_path.write_text(transcript.strip() + "\n", encoding="utf-8")
-            except OSError:  # pragma: no cover - filesystem failure
-                _LOGGER.exception("Failed to write transcript for clip %s", context.clip_id)
 
         _LOGGER.info("Closed clip %s", context.clip_id)
         return final_paths
@@ -271,7 +299,12 @@ def _extract_transcript(analysis_result) -> Optional[str]:
         return analysis_result
 
     if isinstance(analysis_result, Mapping):
-        for key in ("transcript", "summary", "text"):
+        audio = analysis_result.get("audio")
+        if isinstance(audio, Mapping):
+            transcript = audio.get("transcript")
+            if isinstance(transcript, str) and transcript.strip():
+                return transcript
+        for key in ("summary", "transcript", "text"):
             value = analysis_result.get(key)
             if isinstance(value, str) and value.strip():
                 return value
