@@ -1,4 +1,6 @@
 {
+  "persons": [],
+  "objects": [],
   "default": {
     "name": "Blue Dream Assistant",
     "description": "A helpful assistant configured for the Blue-Dream project.",
