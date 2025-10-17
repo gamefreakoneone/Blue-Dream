@@ -11,43 +11,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from . import state_store
 from .schemas import Appearance, Event, GeminiClip, PersonObservation, SceneState
 
-try:  # pragma: no cover - optional dependency
-    from langgraph.graph import START, END, StateGraph
-except Exception:  # pragma: no cover - fallback shim
-    START = "__start__"
-    END = "__end__"
-
-    class StateGraph:  # type: ignore[override]
-        """Minimal linear graph runner compatible with LangGraph usage."""
-
-        def __init__(self, _state_type):
-            self._order: List[str] = []
-            self._nodes: Dict[str, callable] = {}
-            self._edges: Dict[str, List[str]] = {}
-
-        def add_node(self, name: str, func):
-            self._nodes[name] = func
-
-        def add_edge(self, source: str, target: str):
-            self._edges.setdefault(source, []).append(target)
-
-        def compile(self):
-            order: List[str] = []
-            current = self._edges.get(START, [END])[0]
-            while current != END:
-                order.append(current)
-                current = self._edges.get(current, [END])[0]
-            functions = [self._nodes[name] for name in order]
-
-            class _Runner:
-                def __call__(self, state: Dict[str, object]):
-                    for fn in functions:
-                        updates = fn(state)
-                        if updates:
-                            state.update(updates)
-                    return state
-
-            return _Runner()
+from langgraph.graph import START, END, StateGraph
 
 
 _IDENTITIES_PATH = Path(os.environ.get("IDENTITIES_FILE", "Environment/identities.json")).expanduser()
@@ -267,6 +231,7 @@ def _update_world(state: Dict[str, object]) -> Dict[str, object]:
                 "clip_id": clip.clip_id,
                 "appearance": person.appearance.model_dump(mode="python"),
                 "pid_hint": person.pid_hint,
+                "metadata": clip.metadata,
             }
         )
         if events:
@@ -286,6 +251,7 @@ def _update_world(state: Dict[str, object]) -> Dict[str, object]:
                 "picked_by": holder or obj.picked_by,
                 "placed_at": obj.placed_at,
                 "uncertain": obj.uncertain,
+                "metadata": clip.metadata,
             }
         )
         if obj.exited_with:

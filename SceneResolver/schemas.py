@@ -65,6 +65,7 @@ class AudioSummary(BaseModel):
         return None
 
 
+from typing import Any
 class GeminiClip(BaseModel):
     clip_id: str
     room: Literal["A", "B"]
@@ -72,6 +73,7 @@ class GeminiClip(BaseModel):
     people: List[PersonObservation] = Field(default_factory=list)
     objects: List[ObjectObservation] = Field(default_factory=list)
     audio: Optional[AudioSummary] = Field(default=None)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class Event(BaseModel):

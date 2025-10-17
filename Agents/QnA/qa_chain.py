@@ -12,40 +12,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 from SceneResolver.state_store import load_state
 from SceneResolver.schemas import Event, SceneState
 
-try:  # pragma: no cover - optional dependency
-    from langgraph.graph import END, START, StateGraph
-except Exception:  # pragma: no cover - fallback shim
-    END = "__end__"
-    START = "__start__"
-
-    class StateGraph:  # type: ignore[misc]
-        def __init__(self, _state_type):
-            self._edges: Dict[str, List[str]] = {}
-            self._nodes: Dict[str, callable] = {}
-
-        def add_node(self, name: str, func):
-            self._nodes[name] = func
-
-        def add_edge(self, source: str, target: str):
-            self._edges.setdefault(source, []).append(target)
-
-        def compile(self):
-            order: List[str] = []
-            current = self._edges.get(START, [END])[0]
-            while current != END:
-                order.append(current)
-                current = self._edges.get(current, [END])[0]
-            functions = [self._nodes[name] for name in order]
-
-            class _Runner:
-                def __call__(self, state: Dict[str, Any]):
-                    for fn in functions:
-                        updates = fn(state)
-                        if updates:
-                            state.update(updates)
-                    return state
-
-            return _Runner()
+from langgraph.graph import END, START, StateGraph
 
 
 logger = logging.getLogger(__name__)
@@ -82,40 +49,40 @@ def _load_transcripts_node(state: Dict[str, Any]) -> Dict[str, Any]:
     return {"transcripts": transcripts}
 
 
+from langchain_core.documents import Document
+from . import rag_utils
+
+VECTOR_STORE_DIR = Path(os.environ.get("VECTOR_STORE_DIR", "./data/vector_store")).expanduser()
 def _build_sources_node(state: Dict[str, Any]) -> Dict[str, Any]:
     scene_state: SceneState = state.get("scene_state", SceneState())
     transcripts: Sequence[Transcript] = state.get("transcripts", [])
-    sources: List[SourceChunk] = []
+    documents: List[Document] = []
 
-    sources.extend(_summarise_world_state(scene_state))
-    sources.extend(_summarise_timeline(scene_state.timeline))
+    for chunk in _summarise_world_state(scene_state):
+        documents.append(Document(page_content=chunk.text, metadata={"citation": chunk.citation}))
+
+    for chunk in _summarise_timeline(scene_state.timeline):
+        documents.append(Document(page_content=chunk.text, metadata={"citation": chunk.citation}))
+
     for transcript in transcripts:
-        sources.append(SourceChunk(text=transcript.text, citation=transcript.citation()))
+        documents.append(Document(page_content=transcript.text, metadata={"citation": transcript.citation()}))
 
-    return {"sources": sources}
+    vector_store = rag_utils.create_vector_store_from_documents(documents, str(VECTOR_STORE_DIR))
+    return {"vector_store": vector_store}
 
 
 def _answer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     question: str = state.get("question", "")
-    sources: Sequence[SourceChunk] = state.get("sources", [])
-    keywords = _extract_keywords(question)
+    vector_store = state.get("vector_store")
 
-    best_chunk: Optional[SourceChunk] = None
-    best_score = -1
-    for chunk in sources:
-        if not chunk.text:
-            continue
-        score = _score_text(chunk.text, keywords) if keywords else len(chunk.text)
-        if score > best_score:
-            best_score = score
-            best_chunk = chunk
+    if not vector_store:
+        return {"answer": "I'm not sure yet.", "citations": []}
 
-    if best_chunk and best_score > 0:
-        answer_text = best_chunk.text
-        citations = [best_chunk.citation]
-    elif best_chunk:
-        answer_text = best_chunk.text
-        citations = [best_chunk.citation]
+    results = vector_store.similarity_search(question, k=1)
+
+    if results:
+        answer_text = results[0].page_content
+        citations = [results[0].metadata.get("citation", "")]
     else:
         answer_text = "I'm not sure yet."
         citations = []
@@ -216,21 +183,7 @@ def _summarise_timeline(timeline: Sequence[Event]) -> List[SourceChunk]:
     return chunks
 
 
-def _extract_keywords(question: str) -> List[str]:
-    tokens = re.findall(r"[A-Za-z0-9']+", question.lower())
-    keywords = [token for token in tokens if len(token) > 2]
-    seen = set()
-    ordered: List[str] = []
-    for keyword in keywords:
-        if keyword not in seen:
-            seen.add(keyword)
-            ordered.append(keyword)
-    return ordered
 
-
-def _score_text(text: str, keywords: Sequence[str]) -> int:
-    lowered = text.lower()
-    return sum(lowered.count(keyword) for keyword in keywords)
 
 
 def _build_graph():
