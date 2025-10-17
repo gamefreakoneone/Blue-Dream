@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -173,12 +174,17 @@ def run_capture(config: Config) -> None:
 
     fps_candidates = [c.fps for c in config.cameras if c.fps]
     default_fps = fps_candidates[0] if fps_candidates else 30.0
+    os.environ.setdefault("STATE_PATH", str(config.capture.state_path))
+    os.environ.setdefault("TRANSCRIPTS_DIR", str(config.capture.transcripts_dir))
+
+    camera_rooms = {camera.name: camera.room for camera in config.cameras}
     writer = ClipWriter(
         output_dir=config.capture.output_dir,
         transcripts_dir=config.capture.transcripts_dir,
         camera_names=[c.name for c in config.cameras],
         default_fps=default_fps,
         downscale_height=config.capture.downscale_height,
+        camera_rooms=camera_rooms,
     )
     audio_recorder = _setup_audio(config)
     audio_running = False
@@ -217,6 +223,7 @@ def run_capture(config: Config) -> None:
                     "sequence": clip_sequence,
                     "started_at": datetime.utcnow().isoformat(),
                     "initial_counts": person_counts,
+                    "camera_rooms": camera_rooms,
                 }
                 started, audio_started = _start_clip(
                     writer, metadata=metadata, audio_recorder=audio_recorder
@@ -237,6 +244,7 @@ def run_capture(config: Config) -> None:
                         "ended_at": datetime.utcnow().isoformat(),
                         "reason": "chunk",
                         "person_counts": person_counts,
+                        "camera_rooms": camera_rooms,
                     }
                     closed = _finalise_clip(
                         writer,
@@ -252,6 +260,7 @@ def run_capture(config: Config) -> None:
                             "sequence": clip_sequence,
                             "started_at": datetime.utcnow().isoformat(),
                             "initial_counts": person_counts,
+                            "camera_rooms": camera_rooms,
                         }
                         started, audio_started = _start_clip(
                             writer, metadata=metadata, audio_recorder=audio_recorder
@@ -268,6 +277,7 @@ def run_capture(config: Config) -> None:
                             "ended_at": datetime.utcnow().isoformat(),
                             "reason": "idle",
                             "person_counts": person_counts,
+                            "camera_rooms": camera_rooms,
                         }
                         _finalise_clip(
                             writer,
@@ -286,6 +296,7 @@ def run_capture(config: Config) -> None:
             metadata = {
                 "ended_at": datetime.utcnow().isoformat(),
                 "reason": "shutdown",
+                "camera_rooms": camera_rooms,
             }
             _finalise_clip(writer, audio_recorder, audio_running, metadata=metadata)
         for runtime in runtimes.values():

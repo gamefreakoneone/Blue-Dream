@@ -1,4 +1,3 @@
-"""FastAPI application exposing the question answering helpers."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,7 +6,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from .qa_chain import SceneState, answer as qa_answer, load_scene_state
+from SceneResolver.state_store import load_state
+
+from .qa_chain import STATE_PATH, answer
 
 app = FastAPI(title="Scene QA")
 
@@ -24,8 +25,8 @@ def _resolve_web_root() -> Path:
 
 @app.get("/state")
 def get_state() -> dict:
-    state: SceneState = load_scene_state()
-    return state.to_dict()
+    state = load_state(STATE_PATH)
+    return state.model_dump(mode="python")
 
 
 @app.post("/ask")
@@ -34,7 +35,7 @@ def ask(question: Question) -> dict:
     if not prompt:
         raise HTTPException(status_code=400, detail="Question must not be empty.")
 
-    return qa_answer(prompt)
+    return answer(prompt)
 
 
 @app.get("/")
