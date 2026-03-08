@@ -1,6 +1,6 @@
 # Memoria: The Dementia Assistant
 
-Memoria is an intelligent dementia assistance system designed to improve safety and accessibility for users. It combines computer vision for fall detection with a smart conversational agent ("Jeeves") that can help locate lost objects and recall past activities.
+Memoria is an intelligent dementia assistance system designed to improve safety and accessibility for users. It combines computer vision for fall detection with a smart conversational agent ("Memoria") that can help locate lost objects and recall past activities.
 
 ![Demo GIF](Demo/shortened%20project%20meoria%20(1).gif)
 
