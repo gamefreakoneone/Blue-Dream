@@ -184,7 +184,8 @@ python Capture/camera_feed.py
 - Feature 4: semantic-to-time fallback reasoning
 - Feature 5: Gemini spatial localization replacement
 - Feature 6: voice support with Nova
-- Feature 7: demo and submission readiness
+- Feature 7: conversation memory
+- Feature 8: demo and submission readiness
 
 ## Validation Checklist for Future Agent Work
 - For touched Python files:

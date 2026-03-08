@@ -299,7 +299,44 @@
 - add voice support to architecture map
 - add any new API endpoints and UI assumptions
 
-### Feature 7: Demo and Submission Readiness
+### Feature 7: Conversation Memory
+**Status:** Planned
+
+**Goal**
+- Give the agent memory of the current conversation so follow-up questions can use prior turns as context.
+
+**Primary outcome**
+- The patient can ask follow-up questions without repeating all prior context.
+
+**Files expected to change**
+- `Blue_dream_agents/jeeves.py`
+- `Blue_dream_agents/api.py`
+- new session/memory helper module if needed
+- `UI/script.js` if a session identifier needs to be sent explicitly
+
+**Required work**
+- define a per-session conversation memory strategy
+- store recent conversation turns separately from long-term memory events
+- pass conversation history into routing and answer synthesis
+- preserve compatibility with existing `/query` behavior
+- add clear limits so short-term conversation memory does not pollute event-memory retrieval
+
+**Acceptance criteria**
+- follow-up questions can rely on prior turns
+- conversation memory does not break time, object, or semantic retrieval
+- fresh sessions still behave correctly without prior context
+
+**Commit gate**
+- test at least:
+  - a follow-up object query
+  - a follow-up semantic query
+  - a fresh-session query with no prior history
+
+**AGENTS update after completion**
+- document the conversation-memory behavior and storage strategy
+- update any API assumptions if a session identifier is added
+
+### Feature 8: Demo and Submission Readiness
 **Status:** Planned
 
 **Goal**
