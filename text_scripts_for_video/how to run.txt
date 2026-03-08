@@ -1,0 +1,4 @@
+uvicorn Blue_dream_agents.api:app --reload
+
+uvicorn Blue_dream_agents.api:app --host 0.0.0.0 --port 8000 --reload
+
