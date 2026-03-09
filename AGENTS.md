@@ -102,8 +102,12 @@ python Capture/camera_feed.py
   - -> MongoDB `dementia_assistance.events`
 - Assistant request pipeline:
   - `Blue_dream_agents/api.py` (`POST /query`)
-  - -> `Blue_dream_agents/jeeves.py` (orchestrator)
+  - -> `Blue_dream_agents/jeeves.py` (Strands orchestrator on native Bedrock)
   - -> `Blue_dream_agents/time_agent.py` and `Blue_dream_agents/object_detector.py`
+  - -> `Blue_dream_agents/llm/settings.py`
+  - -> `Blue_dream_agents/llm/model_registry.py`
+  - -> `Blue_dream_agents/llm/bedrock_client.py`
+  - -> `Blue_dream_agents/llm/strands_runtime.py`
 - Frontend:
   - `UI/index.html`, `UI/script.js`, `UI/styles.css`
   - `UI/script.js` posts to `/query` and renders optional images.
@@ -115,6 +119,10 @@ python Capture/camera_feed.py
 - `Blue_dream_agents/jeeves.py`
 - `Blue_dream_agents/time_agent.py`
 - `Blue_dream_agents/object_detector.py`
+- `Blue_dream_agents/llm/settings.py`
+- `Blue_dream_agents/llm/model_registry.py`
+- `Blue_dream_agents/llm/bedrock_client.py`
+- `Blue_dream_agents/llm/strands_runtime.py`
 - `Blue_dream_agents/consolidator.py`
 - `Blue_dream_agents/video_agent.py`
 - `Blue_dream_agents/audio_transcribe.py`
@@ -138,9 +146,20 @@ python Capture/camera_feed.py
 
 ## Environment + Secrets
 - Required keys in `.env` for core behavior:
-  - `OPENAI_API_KEY`
+  - `AWS_BEARER_TOKEN_BEDROCK` or standard AWS credentials/profile
   - `GEMINI_API_KEY`
   - Optional: `MONGODB_URI`
+- Optional Nova overrides:
+  - `NOVA_ROUTER_MODEL`
+  - `NOVA_SYNTHESIS_MODEL`
+  - `NOVA_VISION_MODEL`
+  - `NOVA_VISION_FALLBACK_MODEL`
+  - `BEDROCK_AWS_REGION`
+  - `BEDROCK_API_KEY_REGION`
+- Current Bedrock-native defaults/expectations:
+  - standard AWS credentials path prefers `BEDROCK_AWS_REGION=us-east-2`
+  - API-key auth path falls back to a Bedrock-supported API-key region if needed
+  - Nova 2 Lite should be referenced through the inference-profile style model ID, for example `us.amazon.nova-2-lite-v1:0`
 - Gmail integration expects:
   - `Blue_dream_agents/Tools/credentials.json`
   - Generated token: `Blue_dream_agents/Tools/token.pickle`
@@ -148,11 +167,14 @@ python Capture/camera_feed.py
 
 ## Known Quirks Agents Must Respect
 - `README.md` references `GOOGLE_API_KEY`, while code uses `GEMINI_API_KEY`.
-- `time_agent.py` includes both a test entrypoint block and the exported `time_agent` agent near file end.
+- `time_agent.py` now routes through structured Strands prompts rather than an exported SDK agent object.
 - `Capture/camera_feed.py` currently uses hardcoded camera indices `[1, 2]`.
 - `Capture/camera_feed.py` has a hardcoded fall-alert recipient email.
 - `Blue_dream_agents/sam3_api.py` contains local-machine-specific SAM3 root/CWD behavior.
-- Some imports used by code are not represented in `requirements.txt` (for example `agents`, `chromadb`, Gmail auth client libs).
+- Bedrock-native access is now the active Nova path.
+- Nova 2 Lite requests may fail with the bare model ID `amazon.nova-2-lite-v1:0`; the working Bedrock path is the inference-profile style ID such as `us.amazon.nova-2-lite-v1:0`.
+- API-key auth is region-limited, so the runtime falls back to a supported API-key region when standard AWS credentials are not present.
+- Some imports used by code are not represented in `requirements.txt` (for example `chromadb`, Gmail auth client libs).
 - Repository includes real `Storage/` media artifacts; treat them as runtime data, not source code.
 
 ## Safe Edit Rules (Project-Specific)

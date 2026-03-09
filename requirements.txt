@@ -7,6 +7,8 @@ opencv-python        # Camera capture and video processing
 # AI APIs
 google-genai         # Gemini API for video analysis
 openai               # OpenAI API for transcription and image editing
+strands-agents[bedrock]  # Strands runtime over native Amazon Bedrock
+boto3                # Native Amazon Bedrock client/auth stack
 
 # Audio Processing
 pyaudio              # Audio recording

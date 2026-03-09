@@ -49,7 +49,7 @@
 ## Feature Roadmap
 
 ### Feature 1: Nova Provider Integration and Routing Refactor
-**Status:** Planned
+**Status:** In Progress
 
 **Goal**
 - Replace hard-wired model usage with a provider abstraction so the backend can use Nova cleanly without breaking the current API contract.
@@ -71,6 +71,25 @@
 - refactor orchestrator logic to use provider methods instead of directly coupling to current OpenAI/Gemini paths where avoidable
 - preserve the current `JeevesResponse` shape
 - preserve object/time tool compatibility
+- use Strands Agents over native Amazon Bedrock as the active runtime path
+- support both standard AWS credentials and Bedrock API-key auth, with a supported-region fallback for API-key mode
+- defer ingestion-time transcription/provider migration to Feature 6
+
+**Implementation notes so far**
+- OpenAI Agents SDK has been removed from the active `/query` path.
+- Shared Bedrock runtime modules now live under `Blue_dream_agents/llm/`.
+- Active runtime is now Strands + native Bedrock, not Bedrock Mantle / OpenAI-compatible transport.
+- Current successful Bedrock target for Nova 2 Lite is the inference-profile style model ID `us.amazon.nova-2-lite-v1:0`.
+- The bare model ID `amazon.nova-2-lite-v1:0` can fail with a Bedrock validation error requiring an inference profile.
+- Region handling is auth-dependent:
+  - standard AWS credentials path prefers `us-east-2`
+  - API-key auth path may need a Bedrock-supported API-key region instead
+
+**Outstanding work before validation**
+- confirm Strands Bedrock runtime is installed and stable in the target env
+- smoke-test `/query` end-to-end with the inference-profile model IDs in `.env`
+- verify both a time query and an object query complete successfully against Bedrock
+- decide whether code defaults should be changed from bare `amazon.*` Nova IDs to `us.amazon.*` inference-profile IDs
 
 **Acceptance criteria**
 - existing text queries still return valid responses
