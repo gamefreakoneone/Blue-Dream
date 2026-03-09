@@ -71,15 +71,25 @@ python Capture/camera_feed.py
 ### 2) Event Ingestion Contract (MongoDB)
 - Database: `dementia_assistance`
 - Collection: `events`
-- Inserted document fields from consolidator:
+- Canonical event model: `Blue_dream_agents/memory_schema.py::MemoryEvent`
+- New consolidator writes include:
+  - `_id` (Mongo `ObjectId`)
+  - `event_id`
   - `timestamp`
   - `room_number`
+  - `room_name`
   - `video_description`
   - `room_objects`
   - `audio_transcript`
   - `screenshot_path`
   - `video_path`
   - `audio_path`
+  - `semantic_text`
+- Legacy Mongo docs are still supported through read-time normalization:
+  - `event_id` falls back to `_id`
+  - `room_name` falls back to the shared room map
+  - `semantic_text` is built from the event fields if absent
+- Active retrieval paths in `time_agent.py` and `object_detector.py` now normalize Mongo docs through `MemoryEvent` before reasoning over them.
 
 ### 3) Static Path Conventions
 - API mounts:
@@ -99,11 +109,13 @@ python Capture/camera_feed.py
   - `Capture/camera_feed.py`
   - -> `Capture/video_processing_queue.py` (`VideoProcessingQueue`)
   - -> `Blue_dream_agents/consolidator.py` (`consolidator_agent`)
+  - -> `Blue_dream_agents/memory_schema.py` (`MemoryEvent` normalization/serialization)
   - -> MongoDB `dementia_assistance.events`
 - Assistant request pipeline:
   - `Blue_dream_agents/api.py` (`POST /query`)
   - -> `Blue_dream_agents/jeeves.py` (Strands orchestrator on native Bedrock)
   - -> `Blue_dream_agents/time_agent.py` and `Blue_dream_agents/object_detector.py`
+  - -> `Blue_dream_agents/memory_schema.py` for canonical event reads
   - -> `Blue_dream_agents/llm/settings.py`
   - -> `Blue_dream_agents/llm/model_registry.py`
   - -> `Blue_dream_agents/llm/bedrock_client.py`
@@ -119,6 +131,7 @@ python Capture/camera_feed.py
 - `Blue_dream_agents/jeeves.py`
 - `Blue_dream_agents/time_agent.py`
 - `Blue_dream_agents/object_detector.py`
+- `Blue_dream_agents/memory_schema.py`
 - `Blue_dream_agents/llm/settings.py`
 - `Blue_dream_agents/llm/model_registry.py`
 - `Blue_dream_agents/llm/bedrock_client.py`
@@ -168,6 +181,7 @@ python Capture/camera_feed.py
 ## Known Quirks Agents Must Respect
 - `README.md` references `GOOGLE_API_KEY`, while code uses `GEMINI_API_KEY`.
 - `time_agent.py` now routes through structured Strands prompts rather than an exported SDK agent object.
+- `semantic_text` is now the canonical event-text representation; Feature 3 should embed it rather than redefine it.
 - `Capture/camera_feed.py` currently uses hardcoded camera indices `[1, 2]`.
 - `Capture/camera_feed.py` has a hardcoded fall-alert recipient email.
 - `Blue_dream_agents/sam3_api.py` contains local-machine-specific SAM3 root/CWD behavior.
@@ -229,4 +243,5 @@ python Capture/camera_feed.py
 
 ## Baseline Note
 - This AGENTS file intentionally documents the present implementation and quirks.
+- Feature 2 canonical memory-event schema is now part of the current implementation baseline.
 - Expect this file to be revised as the planned architecture overhaul proceeds.

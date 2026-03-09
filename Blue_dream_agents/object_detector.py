@@ -13,26 +13,14 @@ from pydantic import BaseModel, Field
 try:
     from .llm.model_registry import get_model_registry
     from .llm.strands_runtime import invoke_multimodal_structured, invoke_structured
-    from .timezone_utils import now_local
+    from .memory_schema import MemoryEvent, ROOMS, memory_event_from_mongo
 except ImportError:
     from llm.model_registry import get_model_registry
     from llm.strands_runtime import invoke_multimodal_structured, invoke_structured
-    from timezone_utils import now_local
+    from memory_schema import MemoryEvent, ROOMS, memory_event_from_mongo
 
 
 logger = logging.getLogger(__name__)
-
-
-class RoomState(BaseModel):
-    room_number: int
-    room_name: str
-    video_description: str
-    room_objects: List[str]
-    audio_transcript: str
-    screenshot_path: str
-    video_path: str
-    audio_path: str
-    timestamp: datetime.datetime
 
 
 class SearchResult(BaseModel):
@@ -66,10 +54,6 @@ class ObjectHintResult(BaseModel):
 
 
 MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-ROOMS: Dict[int, str] = {
-    0: "Bedroom",
-    1: "Living Room",
-}
 _mongo_client: Optional[AsyncIOMotorClient] = None
 
 
@@ -87,7 +71,7 @@ async def close_clients():
         _mongo_client = None
 
 
-async def _get_latest_room_states() -> List[RoomState]:
+async def _get_latest_room_states() -> List[MemoryEvent]:
     collection = get_mongo_client().dementia_assistance.events
     pipeline = [
         {"$sort": {"timestamp": -1}},
@@ -95,22 +79,9 @@ async def _get_latest_room_states() -> List[RoomState]:
         {"$replaceRoot": {"newRoot": "$latest_doc"}},
     ]
 
-    room_states: List[RoomState] = []
+    room_states: List[MemoryEvent] = []
     async for doc in collection.aggregate(pipeline):
-        room_num = int(doc.get("room_number", 0))
-        room_states.append(
-            RoomState(
-                room_number=room_num,
-                room_name=ROOMS.get(room_num, f"Room {room_num}"),
-                video_description=doc.get("video_description", ""),
-                room_objects=doc.get("room_objects", []),
-                audio_transcript=doc.get("audio_transcript", ""),
-                screenshot_path=doc.get("screenshot_path", ""),
-                video_path=doc.get("video_path", ""),
-                audio_path=doc.get("audio_path", ""),
-                timestamp=doc.get("timestamp", now_local()),
-            )
-        )
+        room_states.append(memory_event_from_mongo(doc))
     return room_states
 
 
@@ -119,16 +90,10 @@ async def _get_recent_history(limit: int = 15) -> str:
     cursor = collection.find().sort("timestamp", -1).limit(limit)
     events = []
     async for doc in cursor:
-        timestamp = doc.get("timestamp", now_local())
-        if isinstance(timestamp, datetime.datetime):
-            t_str = timestamp.strftime("%H:%M:%S")
-        else:
-            t_str = str(timestamp)
-
-        room_num = int(doc.get("room_number", 0))
-        room_name = ROOMS.get(room_num, f"Room {room_num}")
-        desc = doc.get("video_description", "No description")
-        events.append(f"[{t_str}] {room_name}: {desc}")
+        event = memory_event_from_mongo(doc)
+        t_str = event.timestamp.strftime("%H:%M:%S")
+        desc = event.video_description or "No description"
+        events.append(f"[{t_str}] {event.room_name}: {desc}")
 
     return "\n".join(reversed(events))
 
@@ -154,7 +119,7 @@ async def _parse_query_intent(user_query: str) -> ObjectQueryIntent:
 
 
 async def _batch_semantic_match(
-    search_term: str, room_states: List[RoomState]
+    search_term: str, room_states: List[MemoryEvent]
 ) -> Optional[ObjectInventoryMatch]:
     inventory_map = {
         f"{room.room_name} (ID {room.room_number})": room.room_objects
@@ -189,7 +154,7 @@ async def _batch_semantic_match(
 
 
 async def _check_image_worker(
-    object_name: str, room: RoomState
+    object_name: str, room: MemoryEvent
 ) -> Optional[Dict[str, Any]]:
     if not room.screenshot_path or not os.path.exists(room.screenshot_path):
         return None
@@ -230,7 +195,7 @@ async def _check_image_worker(
 
 
 async def _parallel_vision_search(
-    object_name: str, room_states: List[RoomState]
+    object_name: str, room_states: List[MemoryEvent]
 ) -> Optional[Dict[str, Any]]:
     results = await asyncio.gather(
         *[_check_image_worker(object_name, room) for room in room_states]

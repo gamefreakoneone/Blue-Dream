@@ -49,7 +49,7 @@
 ## Feature Roadmap
 
 ### Feature 1: Nova Provider Integration and Routing Refactor
-**Status:** In Progress
+**Status:** Validated
 
 **Goal**
 - Replace hard-wired model usage with a provider abstraction so the backend can use Nova cleanly without breaking the current API contract.
@@ -58,6 +58,12 @@
 - `/query` still works.
 - Routing and answer synthesis can use Nova.
 - Current UI contract remains unchanged.
+
+**Implementation status**
+- Code implementation is complete.
+- Shared Bedrock runtime modules are in place under `Blue_dream_agents/llm/`.
+- The active `/query` path now uses Strands + native Bedrock instead of the OpenAI Agents SDK.
+- Runtime validation is complete in the current development environment.
 
 **Files expected to change**
 - `Blue_dream_agents/jeeves.py`
@@ -85,11 +91,15 @@
   - standard AWS credentials path prefers `us-east-2`
   - API-key auth path may need a Bedrock-supported API-key region instead
 
-**Outstanding work before validation**
-- confirm Strands Bedrock runtime is installed and stable in the target env
-- smoke-test `/query` end-to-end with the inference-profile model IDs in `.env`
-- verify both a time query and an object query complete successfully against Bedrock
-- decide whether code defaults should be changed from bare `amazon.*` Nova IDs to `us.amazon.*` inference-profile IDs
+**Validation completed**
+- Strands Bedrock runtime is working in the active development environment.
+- `/query` path works end-to-end with native Bedrock.
+- Nova routing and synthesis are functioning without the earlier runtime/provider errors.
+- Feature 1 is now considered validated.
+
+**Deferred follow-ups**
+- image highlighting still needs further work and remains part of the planned spatial/object pipeline work
+- email/tooling cleanup is still needed, but it is not blocking Feature 1 completion
 
 **Acceptance criteria**
 - existing text queries still return valid responses
@@ -106,7 +116,7 @@
 - update source-of-truth file list if new modules were added
 
 ### Feature 2: Canonical Memory Event Schema
-**Status:** Planned
+**Status:** Validated
 
 **Goal**
 - Standardize how one memory event is represented across ingestion and retrieval.
@@ -137,6 +147,23 @@
   - `semantic_text`
 - keep current Mongo collection and field compatibility
 - adapt time/object read-models from this canonical event model where practical
+- persist deterministic `semantic_text` for all new events in this feature
+- use read-time normalization for old Mongo docs instead of a backfill script
+
+**Implementation notes so far**
+- Shared event normalization now lives in `Blue_dream_agents/memory_schema.py`.
+- New consolidator writes include `event_id`, `room_name`, and canonical `semantic_text`.
+- Legacy Mongo documents are normalized on read by deriving:
+  - `event_id` from `_id`
+  - `room_name` from the shared room map
+  - `semantic_text` from stored event fields when missing
+- Feature 3 should consume stored `semantic_text` for embeddings/vector indexing, not redefine the text format.
+
+**Validation completed**
+- Python syntax sanity checks passed for the touched Feature 2 modules.
+- Legacy/new event normalization behavior was verified with an offline Python smoke test.
+- Live Mongo ingestion path is working with the canonical event writes.
+- `/query` runtime checks passed against the updated canonical event read path.
 
 **Acceptance criteria**
 - consolidator inserts remain backward compatible
@@ -146,6 +173,9 @@
 **Commit gate**
 - verify Mongo insert payload still contains baseline required fields
 - verify existing reads do not break
+- smoke-test new-event insert shape with a live Mongo instance
+- smoke-test `/query` for one time query, one object query, and one general query
+- commit still pending
 
 **AGENTS update after completion**
 - update event ingestion contract
@@ -167,7 +197,7 @@
 - `requirements.txt`
 
 **Required work**
-- add `semantic_text` generation during ingestion
+- use stored `semantic_text` from Feature 2 as the canonical embedding input
 - generate Nova embeddings for each event
 - store vectors in ChromaDB keyed by Mongo event ID
 - keep MongoDB as the source of truth

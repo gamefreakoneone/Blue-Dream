@@ -14,20 +14,13 @@ from pydantic import BaseModel, Field
 try:
     from .llm.model_registry import get_model_registry
     from .llm.strands_runtime import invoke_structured, invoke_text
+    from .memory_schema import MemoryEvent, ROOMS, ROOM_NAME_TO_ID, memory_event_from_mongo
     from .timezone_utils import LOCAL_TZ, now_local
 except ImportError:
     from llm.model_registry import get_model_registry
     from llm.strands_runtime import invoke_structured, invoke_text
+    from memory_schema import MemoryEvent, ROOMS, ROOM_NAME_TO_ID, memory_event_from_mongo
     from timezone_utils import LOCAL_TZ, now_local
-
-
-class ActivityEvent(BaseModel):
-    timestamp: datetime.datetime
-    room_number: int
-    room_name: str
-    video_description: str = ""
-    audio_transcript: str = ""
-    room_objects: List[str] = Field(default_factory=list)
 
 
 class TimelineResult(BaseModel):
@@ -75,13 +68,7 @@ class ActivityEvidence(BaseModel):
     confidence: Literal["high", "medium", "low"] = "low"
     evidence: str = ""
 
-
 MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-ROOMS: Dict[int, str] = {
-    0: "Bedroom",
-    1: "Living Room",
-}
-ROOM_NAME_TO_ID: Dict[str, int] = {v.lower(): k for k, v in ROOMS.items()}
 _mongo_client: Optional[AsyncIOMotorClient] = None
 
 
@@ -175,37 +162,22 @@ async def _get_events(
     end_dt: datetime.datetime,
     room_number: Optional[int] = None,
     limit: int = 100,
-) -> List[ActivityEvent]:
+) -> List[MemoryEvent]:
     collection = get_mongo_client().dementia_assistance.events
     query: Dict[str, Any] = {"timestamp": {"$gte": start_dt, "$lte": end_dt}}
     if room_number is not None:
         query["room_number"] = room_number
 
-    events: List[ActivityEvent] = []
+    events: List[MemoryEvent] = []
     cursor = collection.find(query).sort("timestamp", 1).limit(limit)
     async for doc in cursor:
-        timestamp = doc.get("timestamp", now_local())
-        if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=datetime.timezone.utc)
-        timestamp_local = timestamp.astimezone(LOCAL_TZ)
-
-        room_num = doc.get("room_number", 0)
-        events.append(
-            ActivityEvent(
-                timestamp=timestamp_local,
-                room_number=room_num,
-                room_name=ROOMS.get(room_num, f"Room {room_num}"),
-                video_description=doc.get("video_description", ""),
-                audio_transcript=doc.get("audio_transcript", ""),
-                room_objects=doc.get("room_objects", []),
-            )
-        )
+        events.append(memory_event_from_mongo(doc))
 
     return events
 
 
 async def _summarize_with_llm(
-    events: List[ActivityEvent], user_query_context: str
+    events: List[MemoryEvent], user_query_context: str
 ) -> str:
     if not events:
         return "I couldn't find any recorded activities for that time."

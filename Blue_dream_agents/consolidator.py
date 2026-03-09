@@ -1,16 +1,13 @@
-from google import genai
-from dotenv import load_dotenv, find_dotenv
-import os
-from openai import OpenAI
-from .video_agent import Video_Agent
-from .audio_transcribe import Audio_agent
-from motor.motor_asyncio import AsyncIOMotorClient
 import asyncio
 import datetime
-import chromadb
-from .timezone_utils import now_local
+import os
 
-chroma_client = chromadb.Client()
+from motor.motor_asyncio import AsyncIOMotorClient
+
+from .audio_transcribe import Audio_agent
+from .memory_schema import memory_event_to_mongo, new_memory_event
+from .timezone_utils import now_local
+from .video_agent import Video_Agent
 
 # So video is recorded. Then it is passed to the consolidator agent.
 # The consolidator agent will call the video_agent, to describe the video, and the audio_agent which will then transcribe the audio
@@ -65,17 +62,17 @@ async def consolidator_agent(
 
     # we will now create a JSON object which is going to be stored in the database
 
-    document = {
-        "timestamp": timestamp,
-        "room_number": room_number,
-        "video_description": video_details.video_description,
-        "room_objects": video_details.room_objects,
-        "audio_transcript": audio_transcript,
-        "screenshot_path": screenshot_path,
-        "video_path": video_path,
-        "audio_path": audio_path,
-        # "user"  : "Maybe"
-    }
+    event = new_memory_event(
+        timestamp=timestamp,
+        room_number=room_number,
+        video_description=video_details.video_description,
+        room_objects=video_details.room_objects,
+        audio_transcript=audio_transcript,
+        screenshot_path=screenshot_path,
+        video_path=video_path,
+        audio_path=audio_path,
+    )
+    document = memory_event_to_mongo(event)
     result = await collection.insert_one(document)
     print(f"Inserted document with ID: {result.inserted_id}")
 
