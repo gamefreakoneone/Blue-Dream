@@ -2,9 +2,12 @@ import os
 import time 
 import base64
 from openai import OpenAI
-from dotenv import load_dotenv, find_dotenv
+try:
+    from ..llm.settings import load_project_env
+except ImportError:
+    from llm.settings import load_project_env
 
-load_dotenv(find_dotenv())
+load_project_env()
 
 
 class Object_Highlight:

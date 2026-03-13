@@ -7,8 +7,12 @@ from typing import Any, Optional, Sequence, TypeVar
 
 from pydantic import BaseModel
 
-from .bedrock_client import get_bedrock_boto_config, get_bedrock_region
-from .settings import get_provider_settings
+try:
+    from .bedrock_client import get_bedrock_boto_config, get_bedrock_region
+    from .settings import get_provider_settings
+except ImportError:
+    from bedrock_client import get_bedrock_boto_config, get_bedrock_region
+    from settings import get_provider_settings
 
 try:
     from strands import Agent, tool as _strands_tool

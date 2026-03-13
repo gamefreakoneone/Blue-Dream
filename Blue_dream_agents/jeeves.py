@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 try:
     from .llm.model_registry import get_model_registry
-    from .llm.strands_runtime import invoke_structured, strands_tool
+    from .llm.strands_runtime import invoke_structured, invoke_text
     from .object_detector import run_object_query
-    from .time_agent import run_time_query
+    from .semantic_search import SemanticSearchResult, run_semantic_query
+    from .time_agent import TimeWindowContext, get_time_window_context, run_time_query
 except ImportError:
     from llm.model_registry import get_model_registry
-    from llm.strands_runtime import invoke_structured, strands_tool
+    from llm.strands_runtime import invoke_structured, invoke_text
     from object_detector import run_object_query
-    from time_agent import run_time_query
+    from semantic_search import SemanticSearchResult, run_semantic_query
+    from time_agent import TimeWindowContext, get_time_window_context, run_time_query
 
 
 class JeevesResponse(BaseModel):
@@ -34,51 +37,271 @@ class JeevesResponse(BaseModel):
     )
 
 
-@strands_tool
-async def time_agent_tool(query: str) -> dict:
-    """Handle questions about past activities, history, or conversations."""
-
-    return (await run_time_query(query)).model_dump(mode="json")
+class QueryRoute(BaseModel):
+    intent: Literal["object", "time", "semantic", "general"] = "general"
+    reason: str = ""
 
 
-@strands_tool
-async def object_detector_tool(query: str) -> dict:
-    """Handle questions about finding lost physical objects."""
+class SemanticDecision(BaseModel):
+    decision: Literal[
+        "use_semantic_only",
+        "use_semantic_plus_time_window",
+        "use_direct_time_reasoning",
+        "insufficient_evidence",
+    ] = "insufficient_evidence"
+    anchor_event_id: Optional[str] = None
+    reason: str = ""
 
-    return (await run_object_query(query)).model_dump(mode="json")
+
+def _build_activity_response(text: str, data: dict[str, Any]) -> JeevesResponse:
+    return JeevesResponse(
+        response_type="activity",
+        text=text,
+        image_path=None,
+        data=data,
+    )
 
 
-def _jeeves_system_prompt() -> str:
-    return (
-        "You are Jeeves, the main assistant for a dementia-support system.\n"
-        "Use `time_agent_tool` for questions about past activities, what was said, "
-        "or what happened in a room.\n"
-        "Use `object_detector_tool` for questions about locating a physical item.\n"
-        "For greetings or general chat, answer directly.\n"
-        "Always return a JeevesResponse.\n"
-        "- If the object tool found something, set response_type to search_result, "
-        "copy the description into text, copy highlighted_image_path into image_path, "
-        "and store the full tool payload in data.\n"
-        "- If the time tool was used, set response_type to activity, set text from "
-        "the tool text, and store the tool payload in data.\n"
-        "- For general chat, set response_type to general and leave image_path/data null."
+async def _route_query(query: str) -> QueryRoute:
+    registry = get_model_registry()
+    return await invoke_structured(
+        prompt=query,
+        output_model=QueryRoute,
+        system_prompt=(
+            "You route user queries for a dementia-support assistant. "
+            "Choose 'object' for misplaced physical item searches. "
+            "Choose 'time' for explicit time ranges, room history, timelines, or "
+            "questions that are mainly temporal. "
+            "Choose 'semantic' for fuzzy recall about what was said, discussed, "
+            "wanted, or why something was mentioned. "
+            "Choose 'general' for greetings or normal assistant chat."
+        ),
+        model_id=registry.router,
+        structured_output_prompt=(
+            "Return the single best intent and a short reason. "
+            "Prefer semantic for conversational memory questions unless the user is "
+            "clearly asking for a timeline."
+        ),
+        max_tokens=300,
+    )
+
+
+def _semantic_prompt_matches(result: SemanticSearchResult) -> list[dict[str, Any]]:
+    matches: list[dict[str, Any]] = []
+    for match in result.matches:
+        matches.append(
+            {
+                "event_id": match.event_id,
+                "score": match.score,
+                "timestamp": match.timestamp,
+                "room_name": match.room_name,
+                "transcript_length": match.transcript_length,
+                "audio_transcript": match.audio_transcript[:800],
+                "video_description": match.video_description[:800],
+                "semantic_text": match.semantic_text[:1200],
+            }
+        )
+    return matches
+
+
+async def _judge_semantic_retrieval(
+    query: str, semantic_result: SemanticSearchResult
+) -> SemanticDecision:
+    registry = get_model_registry()
+    semantic_payload = {
+        "success": semantic_result.success,
+        "index_status": semantic_result.index_status,
+        "error_code": semantic_result.error_code,
+        "match_count": semantic_result.match_count,
+        "matches": _semantic_prompt_matches(semantic_result),
+    }
+    prompt = (
+        f'User question: "{query}"\n'
+        f"Semantic retrieval evidence:\n{json.dumps(semantic_payload, indent=2)}\n\n"
+        "Decide whether the semantic evidence is trustworthy enough to answer "
+        "directly, needs nearby time grounding, should defer to direct time "
+        "reasoning, or is too weak overall."
+    )
+    return await invoke_structured(
+        prompt=prompt,
+        output_model=SemanticDecision,
+        system_prompt=(
+            "You are the retrieval judge for a dementia-support memory assistant. "
+            "Choose use_semantic_plus_time_window when semantic hits are relevant "
+            "but the final answer should be verified with nearby timeline or "
+            "transcript evidence around one anchor event. "
+            "Choose use_direct_time_reasoning when the semantic hits are weak, "
+            "contradictory, or the question is fundamentally temporal. "
+            "Choose use_semantic_only only when the semantic evidence is already "
+            "specific and trustworthy. "
+            "Choose insufficient_evidence when the supplied evidence is too weak to "
+            "support any grounded answer. "
+            "Only provide anchor_event_id when selecting use_semantic_plus_time_window "
+            "and only if that event id appears in the supplied evidence."
+        ),
+        model_id=registry.synthesis,
+        structured_output_prompt=(
+            "Return the decision, optional anchor_event_id, and a short reason. "
+            "Never invent an anchor event id."
+        ),
+        max_tokens=400,
+    )
+
+
+async def _synthesize_semantic_answer(
+    query: str,
+    semantic_result: SemanticSearchResult,
+    *,
+    decision: SemanticDecision,
+    time_window: Optional[TimeWindowContext] = None,
+) -> str:
+    registry = get_model_registry()
+    prompt_payload: dict[str, Any] = {
+        "query": query,
+        "decision": decision.model_dump(mode="json"),
+        "semantic_matches": _semantic_prompt_matches(semantic_result),
+    }
+    if time_window is not None:
+        prompt_payload["time_window"] = time_window.model_dump(mode="json")
+
+    return await invoke_text(
+        prompt=json.dumps(prompt_payload, indent=2),
+        system_prompt=(
+            "You are Jeeves, a grounded memory assistant for a dementia-support "
+            "system. Synthesize a concise answer using only the supplied evidence. "
+            "Prefer transcript evidence when it directly answers the user's question. "
+            "Mention uncertainty when the evidence is partial. Do not invent reasons, "
+            "times, or conversations that are not present in the evidence."
+        ),
+        model_id=registry.synthesis,
+        max_tokens=500,
+    )
+
+
+async def _handle_semantic_query(query: str) -> JeevesResponse:
+    semantic_result = await run_semantic_query(query)
+    decision = await _judge_semantic_retrieval(query, semantic_result)
+    response_data: dict[str, Any] = {
+        "route_intent": "semantic",
+        "semantic": semantic_result.model_dump(mode="json"),
+        "judge_decision": decision.model_dump(mode="json"),
+        "fallback_used": False,
+        "anchor_event_id": decision.anchor_event_id,
+        "anchor_timestamp": None,
+    }
+
+    if decision.decision == "use_direct_time_reasoning":
+        time_result = await run_time_query(query)
+        response_data["fallback_used"] = True
+        response_data["time"] = time_result.model_dump(mode="json")
+        return _build_activity_response(time_result.text, response_data)
+
+    if decision.decision == "insufficient_evidence":
+        if semantic_result.success and semantic_result.text:
+            text = semantic_result.text
+        else:
+            text = (
+                "I couldn't find enough reliable memory evidence to answer that "
+                "clearly right now."
+            )
+        return _build_activity_response(text, response_data)
+
+    time_window: Optional[TimeWindowContext] = None
+    if decision.decision == "use_semantic_plus_time_window":
+        anchor_match = next(
+            (
+                match
+                for match in semantic_result.matches
+                if match.event_id == decision.anchor_event_id
+            ),
+            semantic_result.matches[0] if semantic_result.matches else None,
+        )
+        if anchor_match is None:
+            response_data["judge_decision"]["decision"] = "insufficient_evidence"
+            return _build_activity_response(
+                "I couldn't find enough reliable evidence to ground that memory.",
+                response_data,
+            )
+
+        response_data["anchor_event_id"] = anchor_match.event_id
+        response_data["anchor_timestamp"] = anchor_match.timestamp
+        time_window = await get_time_window_context(
+            anchor_match.timestamp,
+            query=query,
+            room_name=anchor_match.room_name,
+        )
+        response_data["time_window"] = time_window.model_dump(mode="json")
+        response_data["fallback_used"] = True
+
+    final_text = await _synthesize_semantic_answer(
+        query,
+        semantic_result,
+        decision=decision,
+        time_window=time_window,
+    )
+    return _build_activity_response(final_text, response_data)
+
+
+async def _handle_general_query(query: str) -> JeevesResponse:
+    registry = get_model_registry()
+    text = await invoke_text(
+        prompt=query,
+        system_prompt=(
+            "You are a kind, concise assistant for a dementia-support system. "
+            "Answer naturally and do not promise unsupported features."
+        ),
+        model_id=registry.synthesis,
+        max_tokens=300,
+    )
+    return JeevesResponse(
+        response_type="general",
+        text=text,
+        image_path=None,
+        data=None,
     )
 
 
 async def run_single_query(query: str) -> JeevesResponse:
     try:
-        registry = get_model_registry()
-        response = await invoke_structured(
-            prompt=query,
-            output_model=JeevesResponse,
-            system_prompt=_jeeves_system_prompt(),
-            model_id=registry.synthesis,
-            tools=[time_agent_tool, object_detector_tool],
-            structured_output_prompt=(
-                "Return a valid JeevesResponse that preserves the existing API contract."
-            ),
-            max_tokens=1200,
-        )
+        route = await _route_query(query)
+        if route.intent == "object":
+            result = await run_object_query(query)
+            return JeevesResponse(
+                response_type="search_result",
+                text=result.description or "I couldn't find that object.",
+                image_path=result.highlighted_image_path,
+                data={
+                    "route_intent": route.intent,
+                    "route_reason": route.reason,
+                    "object": result.model_dump(mode="json"),
+                },
+            )
+
+        if route.intent == "time":
+            result = await run_time_query(query)
+            return JeevesResponse(
+                response_type="activity",
+                text=result.text,
+                image_path=None,
+                data={
+                    "route_intent": route.intent,
+                    "route_reason": route.reason,
+                    "time": result.model_dump(mode="json"),
+                },
+            )
+
+        if route.intent == "semantic":
+            response = await _handle_semantic_query(query)
+            if response.data is None:
+                response.data = {}
+            response.data["route_reason"] = route.reason
+            return response
+
+        response = await _handle_general_query(query)
+        response.data = {
+            "route_intent": route.intent,
+            "route_reason": route.reason,
+        }
         return response
     except Exception as exc:
         return JeevesResponse(

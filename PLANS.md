@@ -85,6 +85,7 @@
 - OpenAI Agents SDK has been removed from the active `/query` path.
 - Shared Bedrock runtime modules now live under `Blue_dream_agents/llm/`.
 - Active runtime is now Strands + native Bedrock, not Bedrock Mantle / OpenAI-compatible transport.
+- Ingestion-time audio transcription still uses OpenAI as a temporary compatibility path and is not part of the Bedrock runtime.
 - Current successful Bedrock target for Nova 2 Lite is the inference-profile style model ID `us.amazon.nova-2-lite-v1:0`.
 - The bare model ID `amazon.nova-2-lite-v1:0` can fail with a Bedrock validation error requiring an inference profile.
 - Region handling is auth-dependent:
@@ -175,14 +176,13 @@
 - verify existing reads do not break
 - smoke-test new-event insert shape with a live Mongo instance
 - smoke-test `/query` for one time query, one object query, and one general query
-- commit still pending
 
 **AGENTS update after completion**
 - update event ingestion contract
 - document canonical event model as the new baseline
 
 ### Feature 3: Semantic Search Foundation
-**Status:** Planned
+**Status:** In Progress
 
 **Goal**
 - Add semantic memory retrieval using Nova Multimodal Embeddings and ChromaDB.
@@ -192,6 +192,10 @@
 
 **Files expected to change**
 - `Blue_dream_agents/consolidator.py`
+- `Blue_dream_agents/jeeves.py`
+- `Blue_dream_agents/llm/settings.py`
+- `Blue_dream_agents/llm/model_registry.py`
+- new `llm/embedding_client` module
 - new `semantic_search` module
 - new vector store module or helper
 - `requirements.txt`
@@ -212,6 +216,15 @@
   - lightweight metadata
 - do not duplicate full event storage in Chroma
 
+**Implementation notes so far**
+- Bedrock defaults for the active Feature 3 path now resolve to `us-east-1`.
+- A direct embedding helper now exists separately from the Strands text runtime.
+- Chroma persistence is implemented as a local on-disk index under `Storage/chroma` by default.
+- `consolidator.py` now attempts semantic indexing after a successful Mongo insert and does not roll back Mongo on index failure.
+- `vector_store.py` now isolates production Chroma storage from the vector smoke test so test writes cannot contaminate `memory_events`.
+- `semantic_search.py` now validates persisted Chroma state before querying, enforces the 1024-dim production embedding shape, and can reset invalid local Chroma state before reusing it.
+- `semantic_search.py` continues to use Chroma as an index only and fetches matched full records from Mongo before synthesis.
+
 **Acceptance criteria**
 - a semantic query can return relevant prior events
 - vector index stays consistent with Mongo event IDs
@@ -220,6 +233,7 @@
 **Commit gate**
 - test at least 3 semantic queries against recorded data
 - verify retrieved events map correctly back to Mongo records
+- confirm time/object/general query flows still return valid responses
 
 **AGENTS update after completion**
 - add ChromaDB to architecture map
@@ -227,7 +241,7 @@
 - document semantic retrieval flow
 
 ### Feature 4: Semantic-to-Time Fallback Reasoning
-**Status:** Planned
+**Status:** In Progress
 
 **Goal**
 - Add the multi-step analysis path where semantic retrieval can fall back to time-based context when needed.
@@ -260,6 +274,16 @@
   - temporal inconsistency
   - explicit time language in user query
 
+**Implementation notes so far**
+- `jeeves.py` now uses explicit query routing for `/query` instead of delegating all routing to a generic tool-selection prompt.
+- Semantic questions now run through a structured LLM judge that decides between:
+  - `use_semantic_only`
+  - `use_semantic_plus_time_window`
+  - `use_direct_time_reasoning`
+  - `insufficient_evidence`
+- `time_agent.py` now exposes a direct time-window lookup helper so semantic retrieval can gather nearby evidence around a trusted anchor timestamp without reparsing the original query.
+- Final synthesis now combines semantic evidence with nearby time evidence only when the judge determines the semantic anchor is trustworthy enough.
+
 **Acceptance criteria**
 - semantic-only questions work
 - mixed questions work
@@ -276,7 +300,7 @@
 - document fallback logic as a project behavior
 
 ### Feature 5: Gemini Spatial Localization Replacement
-**Status:** Planned
+**Status:** Validated
 
 **Goal**
 - Replace SAM3-based active object-highlighting logic with Gemini-based image bounding/localization.
@@ -287,6 +311,7 @@
 
 **Files expected to change**
 - `Blue_dream_agents/object_detector.py`
+- `Blue_dream_agents/llm/settings.py`
 - any SAM3-dependent modules
 - image highlight utility
 - possibly new Gemini spatial helper module
@@ -297,6 +322,24 @@
 - generate highlighted image server-side
 - preserve returned `image_path`
 - preserve `/capture` and `/storage` compatibility
+
+**Implementation notes so far**
+- Active object highlighting now routes through `Blue_dream_agents/gemini_spatial.py`.
+- `object_detector.py` preserves the existing retrieval flow and now passes target-object context, inventory synonyms, and grounding text into Gemini localization.
+- The active highlighter draws one server-side red bounding box and saves the result under `Storage/highlighted`.
+- `sam3_api.py` remains in the repository as legacy code but is no longer imported by the active object-highlighting path.
+- `gemini_spatial.py` now accepts both labeled-object JSON output and Gemini's alternate array-style bounding-box output such as `[y1, x1, y2, x2, label]`.
+- Gemini spatial model resolution now falls back in this order:
+  - `GEMINI_SPATIAL_MODEL`
+  - `GEMINI_VIDEO_MODEL`
+  - `gemini-2.5-flash`
+
+**Validation completed**
+- Offline syntax sanity checks passed for the touched Feature 5 Python files.
+- Offline parser and bounding-box normalization smoke checks passed for the new Gemini spatial helper.
+- Live Gemini localization and highlight generation succeeded against `Storage/screenshots/camera_1/camera_1_2026-01-15_16-31-06.jpg` for the target object `smartphone`.
+- The validated live output was written to `Storage/highlighted/smartphone_20260313_023218.png`.
+- A live failure-to-highlight case was also observed for a non-matching target (`white water bottle`) on the same screenshot, confirming the helper returns `None` cleanly when Gemini does not produce a usable match.
 
 **Acceptance criteria**
 - object search still returns a useful highlighted image

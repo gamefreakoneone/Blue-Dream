@@ -1,4 +1,6 @@
 # Blue-Dream Project Dependencies
+# Install PyTorch/Torchvision separately in the conda env before this file:
+# conda install pytorch torchvision -c pytorch -c nvidia
 
 # Computer Vision & AI
 ultralytics          # YOLO11 model for human detection
@@ -6,8 +8,10 @@ opencv-python        # Camera capture and video processing
 
 # AI APIs
 google-genai         # Gemini API for video analysis
+google-auth-oauthlib # Gmail OAuth flow
+google-api-python-client # Gmail API client
 openai               # OpenAI API for transcription and image editing
-strands-agents[bedrock]  # Strands runtime over native Amazon Bedrock
+strands-agents       # Strands runtime over native Amazon Bedrock
 boto3                # Native Amazon Bedrock client/auth stack
 
 # Audio Processing
@@ -16,6 +20,8 @@ pydub                # Audio format conversion (requires FFmpeg)
 
 # Utilities
 python-dotenv        # Environment variable loading from .env
+pydantic             # Shared response models and canonical event schemas
+Pillow               # Server-side screenshot bounding-box rendering
 
 # Web Server
 fastapi              # Backend API
@@ -23,3 +29,4 @@ uvicorn              # ASGI Server
 
 # Database
 motor                # Async MongoDB driver
+chromadb             # Persistent vector index for semantic memory search

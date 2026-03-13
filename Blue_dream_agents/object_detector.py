@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import datetime
 import json
 import logging
 import os
@@ -11,10 +10,12 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 
 try:
+    from .gemini_spatial import highlight_object_with_gemini
     from .llm.model_registry import get_model_registry
     from .llm.strands_runtime import invoke_multimodal_structured, invoke_structured
     from .memory_schema import MemoryEvent, ROOMS, memory_event_from_mongo
 except ImportError:
+    from gemini_spatial import highlight_object_with_gemini
     from llm.model_registry import get_model_registry
     from llm.strands_runtime import invoke_multimodal_structured, invoke_structured
     from memory_schema import MemoryEvent, ROOMS, memory_event_from_mongo
@@ -232,35 +233,24 @@ async def _get_object_hints(search_term: str) -> Optional[str]:
     return result.hint
 
 
-async def _run_sam3_blocking(image_path, object_name):
-    try:
-        try:
-            from .sam3_api import sam3_api
-        except ImportError:
-            from sam3_api import sam3_api
-
-        return await sam3_api(image_path, object_name)
-    except ImportError:
-        logger.warning("SAM3 module not found.")
-        return None, None
-
-
 async def _highlight_object(
-    object_name: str, image_path: str, output_dir: str = "Storage/highlighted"
+    object_name: str,
+    image_path: str,
+    *,
+    matched_object: Optional[str] = None,
+    grounding_text: Optional[str] = None,
+    output_dir: str = "Storage/highlighted",
 ) -> Optional[str]:
     output_dir = os.path.abspath(output_dir)
-    os.makedirs(output_dir, exist_ok=True)
 
     try:
-        result_image, scores = await _run_sam3_blocking(image_path, object_name)
-        if scores is None:
-            return None
-
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_name = "".join(ch for ch in object_name if ch.isalnum())
-        output_path = os.path.join(output_dir, f"{safe_name}_{timestamp}.png")
-        result_image.save(output_path)
-        return output_path
+        return await highlight_object_with_gemini(
+            image_path=image_path,
+            object_name=object_name,
+            matched_object=matched_object,
+            grounding_text=grounding_text,
+            output_dir=output_dir,
+        )
     except Exception as exc:
         logger.warning("Highlight failed for %s: %s", object_name, exc)
         return None
@@ -300,8 +290,10 @@ async def search_for_object(user_query: str) -> SearchResult:
             )
             if room:
                 highlight_path = await _highlight_object(
-                    inventory_match.matched_object or target_object,
+                    target_object,
                     room.screenshot_path,
+                    matched_object=inventory_match.matched_object,
+                    grounding_text=room.video_description,
                 )
                 return SearchResult(
                     found=True,
@@ -315,7 +307,11 @@ async def search_for_object(user_query: str) -> SearchResult:
         vision_match = await _parallel_vision_search(target_object, rooms_to_search)
         if vision_match:
             room = vision_match["room"]
-            highlight_path = await _highlight_object(target_object, room.screenshot_path)
+            highlight_path = await _highlight_object(
+                target_object,
+                room.screenshot_path,
+                grounding_text=vision_match["description"] or room.video_description,
+            )
             return SearchResult(
                 found=True,
                 room_number=room.room_number,

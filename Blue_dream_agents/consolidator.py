@@ -1,11 +1,13 @@
 import asyncio
 import datetime
+import logging
 import os
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from .audio_transcribe import Audio_agent
 from .memory_schema import memory_event_to_mongo, new_memory_event
+from .semantic_search import index_memory_event
 from .timezone_utils import now_local
 from .video_agent import Video_Agent
 
@@ -21,6 +23,9 @@ from .video_agent import Video_Agent
 # 7. Video Path
 
 # This state object will be stored in a NoSQL database. Which will then be interacted with the jeeves agent (main agent)
+
+
+logger = logging.getLogger(__name__)
 
 
 # MongoDB setup
@@ -75,6 +80,14 @@ async def consolidator_agent(
     document = memory_event_to_mongo(event)
     result = await collection.insert_one(document)
     print(f"Inserted document with ID: {result.inserted_id}")
+    try:
+        await index_memory_event(event)
+    except Exception as exc:
+        logger.warning(
+            "Mongo write succeeded but semantic indexing failed for event %s: %s",
+            event.event_id,
+            exc,
+        )
 
     mongodb_client.close()
     return result.inserted_id

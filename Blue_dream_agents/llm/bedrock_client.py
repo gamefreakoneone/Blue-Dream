@@ -4,7 +4,10 @@ from functools import lru_cache
 
 from botocore.config import Config
 
-from .settings import get_provider_settings
+try:
+    from .settings import get_provider_settings
+except ImportError:
+    from settings import get_provider_settings
 
 
 @lru_cache(maxsize=1)

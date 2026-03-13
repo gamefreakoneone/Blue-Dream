@@ -14,12 +14,24 @@ from pydantic import BaseModel, Field
 try:
     from .llm.model_registry import get_model_registry
     from .llm.strands_runtime import invoke_structured, invoke_text
-    from .memory_schema import MemoryEvent, ROOMS, ROOM_NAME_TO_ID, memory_event_from_mongo
+    from .memory_schema import (
+        MemoryEvent,
+        ROOMS,
+        ROOM_NAME_TO_ID,
+        memory_event_from_mongo,
+        normalize_timestamp,
+    )
     from .timezone_utils import LOCAL_TZ, now_local
 except ImportError:
     from llm.model_registry import get_model_registry
     from llm.strands_runtime import invoke_structured, invoke_text
-    from memory_schema import MemoryEvent, ROOMS, ROOM_NAME_TO_ID, memory_event_from_mongo
+    from memory_schema import (
+        MemoryEvent,
+        ROOMS,
+        ROOM_NAME_TO_ID,
+        memory_event_from_mongo,
+        normalize_timestamp,
+    )
     from timezone_utils import LOCAL_TZ, now_local
 
 
@@ -43,6 +55,16 @@ class ActivityCheckResult(BaseModel):
     keyword: str = Field(description="What was searched for")
     confidence: str = Field(description="Confidence level: high, medium, low")
     summary: str = Field(description="Summary of findings")
+
+
+class TimeWindowContext(BaseModel):
+    success: bool = False
+    event_count: int = 0
+    time_range: str = ""
+    room_name: Optional[str] = None
+    summary: str = ""
+    transcripts: List[str] = Field(default_factory=list)
+    events: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class TimeResult(BaseModel):
@@ -209,6 +231,80 @@ async def _summarize_with_llm(
         model_id=registry.synthesis,
         max_tokens=500,
     )
+
+
+async def get_time_window_context(
+    anchor_timestamp: datetime.datetime | str,
+    *,
+    query: str,
+    room_name: Optional[str] = None,
+    window_minutes: int = 20,
+    limit: int = 40,
+) -> TimeWindowContext:
+    try:
+        anchor_dt = normalize_timestamp(anchor_timestamp)
+        room_id = _parse_room_name(room_name) if room_name else None
+        start_dt = anchor_dt - timedelta(minutes=window_minutes)
+        end_dt = anchor_dt + timedelta(minutes=window_minutes)
+        events = await _get_events(start_dt, end_dt, room_number=room_id, limit=limit)
+        time_range = (
+            f"{start_dt.strftime('%b %d %I:%M %p')} to "
+            f"{end_dt.strftime('%b %d %I:%M %p')}"
+        )
+        if not events:
+            return TimeWindowContext(
+                success=False,
+                event_count=0,
+                time_range=time_range,
+                room_name=room_name,
+                summary="I couldn't find nearby events to further ground that memory.",
+                transcripts=[],
+                events=[],
+            )
+
+        transcripts = [
+            f"[{event.timestamp.strftime('%I:%M %p')} - {event.room_name}] "
+            f"{event.audio_transcript}"
+            for event in events
+            if event.audio_transcript.strip()
+        ]
+        summary = await _summarize_with_llm(
+            events,
+            (
+                f'Question: "{query}"\n'
+                "Use the nearby events to verify and ground the memory around the "
+                f"anchor time range {time_range}."
+            ),
+        )
+        serialized_events = [
+            {
+                "event_id": event.event_id,
+                "timestamp": event.timestamp.isoformat(),
+                "room_name": event.room_name,
+                "video_description": event.video_description,
+                "audio_transcript": event.audio_transcript,
+            }
+            for event in events
+        ]
+        return TimeWindowContext(
+            success=True,
+            event_count=len(events),
+            time_range=time_range,
+            room_name=room_name or (events[0].room_name if events else None),
+            summary=summary,
+            transcripts=transcripts,
+            events=serialized_events,
+        )
+    except Exception as exc:
+        return TimeWindowContext(
+            success=False,
+            event_count=0,
+            time_range="",
+            room_name=room_name,
+            summary=f"I'm sorry, I had trouble looking up nearby events: {exc}",
+            transcripts=[],
+            events=[],
+        )
 
 
 async def get_activity_history(time_range: str) -> TimelineResult:

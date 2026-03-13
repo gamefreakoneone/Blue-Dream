@@ -5,7 +5,10 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from .settings import get_provider_settings
+try:
+    from .settings import get_provider_settings
+except ImportError:
+    from settings import get_provider_settings
 
 
 class ModelRegistry(BaseModel):
@@ -15,6 +18,7 @@ class ModelRegistry(BaseModel):
     synthesis: str
     vision: str
     vision_fallback: str
+    embedding: str
 
     def for_task(self, task: Literal["router", "synthesis", "vision"]) -> str:
         if task == "router":
@@ -32,4 +36,5 @@ def get_model_registry() -> ModelRegistry:
         synthesis=settings.nova_synthesis_model,
         vision=settings.nova_vision_model,
         vision_fallback=settings.nova_vision_fallback_model,
+        embedding=settings.nova_embedding_model,
     )

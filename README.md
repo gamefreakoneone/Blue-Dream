@@ -59,7 +59,8 @@ Memoria is an intelligent dementia assistance system designed to improve safety 
 - **MongoDB**: Required for the Time Agent to store and retrieve activity history.
 - **Webcam**: For fall detection and object search.
 - **API Keys**:
-  - OpenAI API Key (for Jeeves/LLM reasoning)
+  - Bedrock bearer token or AWS credentials (for Nova reasoning)
+  - OpenAI API Key for transcription only
   - Google Gemini API Key (for video content analysis)
   - Google Cloud Credentials (for Gmail alerts & Drive upload)
 
@@ -72,6 +73,12 @@ cd Blue-Dream
 ```
 
 ### 2. Install Dependencies
+Install PyTorch/Torchvision in the conda environment first:
+```bash
+conda install pytorch torchvision -c pytorch -c nvidia
+```
+
+Then install the Python package requirements:
 ```bash
 pip install -r requirements.txt
 ```
@@ -86,11 +93,19 @@ Ensure **MongoDB** is installed and running locally on the default port (`27017`
 ### 5. Configuration
 1.  **Environment Variables**: Create a `.env` file in the root directory:
     ```ini
-    OPENAI_API_KEY=your_openai_key
-    GOOGLE_API_KEY=your_gemini_key
+    OPENAI_TRANSCRIBE_API_KEY=your_openai_key
+    GEMINI_API_KEY=your_gemini_key
+    AWS_BEARER_TOKEN_BEDROCK=your_bedrock_bearer_token
+    BEDROCK_AWS_REGION=us-east-1
+    NOVA_ROUTER_MODEL=us.amazon.nova-2-lite-v1:0
+    NOVA_SYNTHESIS_MODEL=us.amazon.nova-2-lite-v1:0
+    NOVA_VISION_MODEL=us.amazon.nova-2-lite-v1:0
+    NOVA_VISION_FALLBACK_MODEL=us.amazon.nova-lite-v1:0
     MONGODB_URI=mongodb://localhost:27017 (Optional, defaults to local)
     ```
+    Bedrock/Nova is the active assistant runtime. OpenAI is currently only used for ingestion-time audio transcription and can still fall back to `OPENAI_API_KEY` during the transition.
 2.  **Google Credentials**: Place your `credentials.json` file in `Blue_dream_agents/Tools/` to enable Gmail alerts and Drive integration.
+    If Gmail auth starts failing with `invalid_grant`, delete `Blue_dream_agents/Tools/token.pickle` and authenticate again.
 
 ## Running the Project
 

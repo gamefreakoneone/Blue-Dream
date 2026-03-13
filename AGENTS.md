@@ -22,7 +22,7 @@
 ## Target Overhaul Direction
 - The patient web app remains the primary surface.
 - MongoDB remains the source of truth for memory events.
-- ChromaDB is planned as the vector index for semantic memory search.
+- ChromaDB is now the active vector index for semantic memory search.
 - Amazon Nova is the primary planned model family for:
   - routing
   - semantic embeddings
@@ -111,14 +111,19 @@ python Capture/camera_feed.py
   - -> `Blue_dream_agents/consolidator.py` (`consolidator_agent`)
   - -> `Blue_dream_agents/memory_schema.py` (`MemoryEvent` normalization/serialization)
   - -> MongoDB `dementia_assistance.events`
+  - -> `Blue_dream_agents/semantic_search.py` / `Blue_dream_agents/vector_store.py`
+  - -> ChromaDB collection `memory_events`
 - Assistant request pipeline:
   - `Blue_dream_agents/api.py` (`POST /query`)
-  - -> `Blue_dream_agents/jeeves.py` (Strands orchestrator on native Bedrock)
-  - -> `Blue_dream_agents/time_agent.py` and `Blue_dream_agents/object_detector.py`
+  - -> `Blue_dream_agents/jeeves.py` (query router + semantic judge on native Bedrock)
+  - -> `Blue_dream_agents/time_agent.py`, `Blue_dream_agents/object_detector.py`, and `Blue_dream_agents/semantic_search.py`
+  - -> `Blue_dream_agents/gemini_spatial.py` for single-box screenshot highlighting on object hits
+  - -> `Blue_dream_agents/time_agent.py::get_time_window_context` for semantic-grounding follow-up around a trusted anchor event
   - -> `Blue_dream_agents/memory_schema.py` for canonical event reads
   - -> `Blue_dream_agents/llm/settings.py`
   - -> `Blue_dream_agents/llm/model_registry.py`
   - -> `Blue_dream_agents/llm/bedrock_client.py`
+  - -> `Blue_dream_agents/llm/embedding_client.py`
   - -> `Blue_dream_agents/llm/strands_runtime.py`
 - Frontend:
   - `UI/index.html`, `UI/script.js`, `UI/styles.css`
@@ -131,12 +136,16 @@ python Capture/camera_feed.py
 - `Blue_dream_agents/jeeves.py`
 - `Blue_dream_agents/time_agent.py`
 - `Blue_dream_agents/object_detector.py`
+- `Blue_dream_agents/gemini_spatial.py`
 - `Blue_dream_agents/memory_schema.py`
 - `Blue_dream_agents/llm/settings.py`
 - `Blue_dream_agents/llm/model_registry.py`
 - `Blue_dream_agents/llm/bedrock_client.py`
+- `Blue_dream_agents/llm/embedding_client.py`
 - `Blue_dream_agents/llm/strands_runtime.py`
 - `Blue_dream_agents/consolidator.py`
+- `Blue_dream_agents/semantic_search.py`
+- `Blue_dream_agents/vector_store.py`
 - `Blue_dream_agents/video_agent.py`
 - `Blue_dream_agents/audio_transcribe.py`
 - `Blue_dream_agents/timezone_utils.py`
@@ -161,35 +170,53 @@ python Capture/camera_feed.py
 - Required keys in `.env` for core behavior:
   - `AWS_BEARER_TOKEN_BEDROCK` or standard AWS credentials/profile
   - `GEMINI_API_KEY`
+  - `OPENAI_TRANSCRIBE_API_KEY` for the current ingestion-time transcription path
   - Optional: `MONGODB_URI`
 - Optional Nova overrides:
   - `NOVA_ROUTER_MODEL`
   - `NOVA_SYNTHESIS_MODEL`
   - `NOVA_VISION_MODEL`
   - `NOVA_VISION_FALLBACK_MODEL`
+  - `NOVA_EMBEDDING_MODEL`
+  - `GEMINI_SPATIAL_MODEL`
   - `BEDROCK_AWS_REGION`
   - `BEDROCK_API_KEY_REGION`
+  - `CHROMA_PERSIST_DIR`
+  - `CHROMA_COLLECTION_NAME`
+  - `SEMANTIC_SEARCH_TOP_K`
 - Current Bedrock-native defaults/expectations:
-  - standard AWS credentials path prefers `BEDROCK_AWS_REGION=us-east-2`
+  - the active Nova setup now standardizes `BEDROCK_AWS_REGION=us-east-1`
   - API-key auth path falls back to a Bedrock-supported API-key region if needed
   - Nova 2 Lite should be referenced through the inference-profile style model ID, for example `us.amazon.nova-2-lite-v1:0`
+  - Nova embeddings use `amazon.nova-2-multimodal-embeddings-v1:0`
+  - Gemini spatial localization defaults to `GEMINI_SPATIAL_MODEL`, then `GEMINI_VIDEO_MODEL`, then `gemini-2.5-flash`
+  - local Chroma persistence defaults to `Storage/chroma`
+  - OpenAI is still used only for ingestion-time audio transcription through `OPENAI_TRANSCRIBE_API_KEY`
+  - `OPENAI_API_KEY` remains a backward-compatible fallback for transcription only
+  - `OPENAI_BASE_URL` is not part of the active runtime contract
 - Gmail integration expects:
   - `Blue_dream_agents/Tools/credentials.json`
   - Generated token: `Blue_dream_agents/Tools/token.pickle`
 - Never commit secrets, tokens, credential files, or local auth artifacts.
 
 ## Known Quirks Agents Must Respect
-- `README.md` references `GOOGLE_API_KEY`, while code uses `GEMINI_API_KEY`.
+- `README.md` may lag the active Nova/OpenAI split if documentation updates are incomplete; verify against source files before changing env guidance.
 - `time_agent.py` now routes through structured Strands prompts rather than an exported SDK agent object.
-- `semantic_text` is now the canonical event-text representation; Feature 3 should embed it rather than redefine it.
+- `semantic_text` is now the canonical event-text representation and is the active embedding input for Feature 3.
+- `/query` no longer relies on a generic tool-selection prompt for semantic/time routing; `jeeves.py` now performs explicit query routing and an LLM-based semantic evidence judgment step before deciding on semantic-only answering, semantic-plus-time grounding, direct time reasoning, or insufficient evidence.
 - `Capture/camera_feed.py` currently uses hardcoded camera indices `[1, 2]`.
 - `Capture/camera_feed.py` has a hardcoded fall-alert recipient email.
-- `Blue_dream_agents/sam3_api.py` contains local-machine-specific SAM3 root/CWD behavior.
+- `Blue_dream_agents/sam3_api.py` remains a legacy module with local-machine-specific SAM3 root/CWD behavior and is no longer on the active object-highlighting path.
 - Bedrock-native access is now the active Nova path.
+- Ingestion-time audio transcription still uses OpenAI `gpt-4o-transcribe`; this is separate from the Bedrock-native Nova runtime and remains slated for Feature 6 migration.
 - Nova 2 Lite requests may fail with the bare model ID `amazon.nova-2-lite-v1:0`; the working Bedrock path is the inference-profile style ID such as `us.amazon.nova-2-lite-v1:0`.
 - API-key auth is region-limited, so the runtime falls back to a supported API-key region when standard AWS credentials are not present.
-- Some imports used by code are not represented in `requirements.txt` (for example `chromadb`, Gmail auth client libs).
+- Production Chroma persistence now assumes a 1024-dimensional semantic collection under `Storage/chroma`; if the local persisted collection has the wrong dimension or contains legacy smoke-test artifacts, the runtime may reset the local Chroma store before reuse.
+- Vector-store smoke tests must never use the production Chroma path or the `memory_events` collection.
+- Some imports used by code are not represented in `requirements.txt` (for example Gmail auth client libs).
 - Repository includes real `Storage/` media artifacts; treat them as runtime data, not source code.
+- Active object highlighting now uses a single Gemini bounding box; if localization fails, the object answer may still return without an `image_path`.
+- Gemini spatial responses may arrive either as object-style JSON (`{"box_2d": [...], "label": ...}`) or array-style output (`[y1, x1, y2, x2, label]`); `gemini_spatial.py` now normalizes both formats.
 
 ## Safe Edit Rules (Project-Specific)
 - If changing response models or API output fields, update both:
@@ -244,4 +271,7 @@ python Capture/camera_feed.py
 ## Baseline Note
 - This AGENTS file intentionally documents the present implementation and quirks.
 - Feature 2 canonical memory-event schema is now part of the current implementation baseline.
+- Feature 3 semantic search foundation is now part of the current code baseline.
+- Feature 5 Gemini spatial localization replacement is now part of the current code baseline.
+- Feature 5 has been live-validated against a stored screenshot with successful Gemini-generated highlighting output under `Storage/highlighted/`.
 - Expect this file to be revised as the planned architecture overhaul proceeds.
