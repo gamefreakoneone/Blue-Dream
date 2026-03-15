@@ -117,7 +117,7 @@ python Capture/camera_feed.py
   - `Blue_dream_agents/api.py` (`POST /query`)
   - -> `Blue_dream_agents/jeeves.py` (query router + semantic judge on native Bedrock)
   - -> `Blue_dream_agents/time_agent.py`, `Blue_dream_agents/object_detector.py`, and `Blue_dream_agents/semantic_search.py`
-  - -> `Blue_dream_agents/gemini_spatial.py` for single-box screenshot highlighting on object hits
+  - -> `Blue_dream_agents/gemini_spatial.py` for automatic single-box screenshot highlighting after a current-state object visual match
   - -> `Blue_dream_agents/time_agent.py::get_time_window_context` for semantic-grounding follow-up around a trusted anchor event
   - -> `Blue_dream_agents/memory_schema.py` for canonical event reads
   - -> `Blue_dream_agents/llm/settings.py`
@@ -215,7 +215,8 @@ python Capture/camera_feed.py
 - Vector-store smoke tests must never use the production Chroma path or the `memory_events` collection.
 - Some imports used by code are not represented in `requirements.txt` (for example Gmail auth client libs).
 - Repository includes real `Storage/` media artifacts; treat them as runtime data, not source code.
-- Active object highlighting now uses a single Gemini bounding box; if localization fails, the object answer may still return without an `image_path`.
+- Object search now checks the latest snapshot for each room first; if the object is visually recognized in a current room image, the runtime attempts Gemini highlighting automatically and falls back to a text-only current-state answer if localization fails.
+- Historical last-known-location reasoning is now only used when the object is not visually recognized in any current room snapshot.
 - Gemini spatial responses may arrive either as object-style JSON (`{"box_2d": [...], "label": ...}`) or array-style output (`[y1, x1, y2, x2, label]`); `gemini_spatial.py` now normalizes both formats.
 
 ## Safe Edit Rules (Project-Specific)

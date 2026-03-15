@@ -327,6 +327,11 @@
 - Active object highlighting now routes through `Blue_dream_agents/gemini_spatial.py`.
 - `object_detector.py` preserves the existing retrieval flow and now passes target-object context, inventory synonyms, and grounding text into Gemini localization.
 - The active highlighter draws one server-side red bounding box and saves the result under `Storage/highlighted`.
+- Object search now follows a current-state-first evidence ladder:
+  - latest snapshot per room is checked visually first
+  - a current visual match automatically triggers Gemini highlighting
+  - if Gemini localization fails, the current-state textual location is still returned
+  - historical last-known-location reasoning only runs when no current room snapshot visually contains the object
 - `sam3_api.py` remains in the repository as legacy code but is no longer imported by the active object-highlighting path.
 - `gemini_spatial.py` now accepts both labeled-object JSON output and Gemini's alternate array-style bounding-box output such as `[y1, x1, y2, x2, label]`.
 - Gemini spatial model resolution now falls back in this order:

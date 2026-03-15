@@ -266,9 +266,10 @@ async def run_single_query(query: str) -> JeevesResponse:
         route = await _route_query(query)
         if route.intent == "object":
             result = await run_object_query(query)
+            response_text = (result.description or "").strip() or "I couldn't find that object."
             return JeevesResponse(
                 response_type="search_result",
-                text=result.description or "I couldn't find that object.",
+                text=response_text,
                 image_path=result.highlighted_image_path,
                 data={
                     "route_intent": route.intent,

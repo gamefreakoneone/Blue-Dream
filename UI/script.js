@@ -15,6 +15,13 @@ chatForm.addEventListener('submit', async (e) => {
     addMessage(query, 'user');
     userInput.value = '';
 
+    // Small animation for logo
+    const logo = document.querySelector('.logo-slime');
+    if (logo) {
+        logo.style.transform = 'scale(1.1) rotate(5deg)';
+        setTimeout(() => logo.style.transform = 'scale(1) rotate(0deg)', 300);
+    }
+
     // Show loading state
     const loadingId = addLoadingIndicator();
 
