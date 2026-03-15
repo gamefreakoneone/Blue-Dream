@@ -31,7 +31,6 @@ The UI is served directly by the FastAPI backend at `http://localhost:8000`.
 - **Exceptions**: Gemini remains on the active path for video understanding and image localization tasks.
 - **Transcription compatibility path**: OpenAI is currently used only for ingestion-time audio transcription.
 
-Legacy note: [`Blue_dream_agents/sam3_api.py`](Blue_dream_agents/sam3_api.py) is still in the repository, but it is not part of the active object-highlighting path.
 
 ## Architecture
 
@@ -261,3 +260,9 @@ Current overhaul status is tracked in [`PLANS.md`](PLANS.md).
 
 - Fallen detection accuracy: 94%
 - Not fallen detection accuracy: 87%
+
+
+Legacy note: [`Blue_dream_agents/sam3_api.py`](Blue_dream_agents/sam3_api.py) is still in the repository, but it is not part of the active object-highlighting path.
+
+
+If you are still reading this, lmao nice. Hit me up.
