@@ -1,12 +1,12 @@
-# Blue-Dream: Dementia Support Monitoring and Recall
+# Project Memoria: Dementia Support Monitoring and Recall
 
-Blue-Dream is a dementia-support system that combines multi-room monitoring, fall detection, and memory recall assistance. The current baseline pairs a FastAPI-served patient web app with a capture pipeline that records events into MongoDB, indexes semantic memory in ChromaDB, and answers object, activity, and recall questions through a Nova-powered assistant.
+Project Memoria is a dementia-support system that combines multi-room monitoring, fall detection, and memory recall assistance. The current baseline pairs a FastAPI-served patient web app with a capture pipeline that records events into MongoDB, indexes semantic memory in ChromaDB, and answers object, activity, and recall questions through a Nova-powered assistant.
 
 ![Demo GIF](Demo/shortened%20project%20meoria%20(1).gif)
 
 ## Demo Overview
 
-Blue-Dream is designed around three connected workflows:
+Project Memoria is designed around three connected workflows:
 
 - continuous room monitoring with fall detection and caregiver alerts
 - event ingestion that stores screenshots, videos, transcripts, and canonical memory events
@@ -63,7 +63,7 @@ At a high level:
 
 ```bash
 git clone <repository-url>
-cd Blue-Dream
+cd Project-Memoria_Dementia-Assistant
 ```
 
 ### 2. Install PyTorch and Torchvision
