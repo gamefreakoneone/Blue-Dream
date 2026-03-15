@@ -138,7 +138,7 @@ def camera_feed():
     last_person_detected_time = {}  # Track when person was last detected per camera
     current_video_filename = {}  # Track current video filename for screenshot
     fall_alert_sent = {}  # Track if fall alert has been sent for current recording session
-    DETECTION_BUFFER_SECONDS = 5  # 3-second buffer before stopping recording
+    DETECTION_BUFFER_SECONDS = 2  # 3-second buffer before stopping recording
 
     # Track fall start time for stability check
     fall_start_time = {}
@@ -219,7 +219,7 @@ def camera_feed():
                         confidence = float(box.conf[0])
 
                         # Apply confidence threshold
-                        if confidence > 0.73:
+                        if confidence > 0.50:
                             # Your model: 0 = fallen, 1 = not fallen (standing)
                             if class_id in (FALLEN_CLASS_ID, NOT_FALLEN_CLASS_ID):
                                 person_detected = True
