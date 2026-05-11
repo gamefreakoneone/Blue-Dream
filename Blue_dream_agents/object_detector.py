@@ -13,12 +13,20 @@ from pydantic import BaseModel, Field
 try:
     from .gemini_spatial import highlight_object_with_gemini
     from .llm.model_registry import get_model_registry
+    from .llm.prompt_context import (
+        with_monitoring_evidence_context,
+        with_patient_cctv_context,
+    )
     from .llm.strands_runtime import invoke_multimodal_structured, invoke_structured
     from .memory_schema import MemoryEvent, ROOMS, memory_event_from_mongo
     from .timezone_utils import now_local
 except ImportError:
     from gemini_spatial import highlight_object_with_gemini
     from llm.model_registry import get_model_registry
+    from llm.prompt_context import (
+        with_monitoring_evidence_context,
+        with_patient_cctv_context,
+    )
     from llm.strands_runtime import invoke_multimodal_structured, invoke_structured
     from memory_schema import MemoryEvent, ROOMS, memory_event_from_mongo
     from timezone_utils import now_local
@@ -139,7 +147,7 @@ async def _parse_query_intent(user_query: str) -> ObjectQueryIntent:
     return await invoke_structured(
         prompt=prompt,
         output_model=ObjectQueryIntent,
-        system_prompt=(
+        system_prompt=with_patient_cctv_context(
             "You parse lost-object queries for a home monitoring assistant. "
             "If the room is unclear, leave room_id null."
         ),
@@ -159,10 +167,12 @@ async def _check_image_worker(
     inventory_hint = ", ".join(room.room_objects) if room.room_objects else "none"
     try:
         result = await invoke_multimodal_structured(
-            text_prompt=(
+            text_prompt=with_monitoring_evidence_context(
                 f"Target object: {object_name}\n"
                 f"Room: {room.room_name}\n"
                 f"Current room inventory hints: {inventory_hint}\n"
+                "Current image source: a fixed room CCTV snapshot, not a first-person "
+                "view.\n"
                 "Decide whether the image visibly contains the target object or a "
                 "clear synonym. Treat the inventory only as synonym guidance, not "
                 "as proof. If found, describe where it is in one short grounded "
@@ -171,7 +181,7 @@ async def _check_image_worker(
             ),
             image_path=room.screenshot_path,
             output_model=ObjectVisionCheck,
-            system_prompt=(
+            system_prompt=with_patient_cctv_context(
                 "You inspect room images for a lost-object assistant. Only mark found "
                 "true when the object is visibly present in the current image."
             ),
@@ -277,14 +287,14 @@ async def _analyze_last_known_location(
 
     registry = get_model_registry()
     result = await invoke_structured(
-        prompt=(
+        prompt=with_monitoring_evidence_context(
             f"User is looking for: {search_term}\n"
             "The object was not visible in any current room snapshot.\n"
             "Here are recent monitoring events, newest first:\n"
             f"{json.dumps(_serialize_history_events(history_events), indent=2)}"
         ),
         output_model=ObjectLastKnownResult,
-        system_prompt=(
+        system_prompt=with_patient_cctv_context(
             "You infer the last known location of a missing household item from "
             "home-monitoring events. Prefer direct mentions in video_description. "
             "Use room_objects only as supporting evidence, never as sole proof. "

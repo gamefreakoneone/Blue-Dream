@@ -13,6 +13,11 @@ from pydantic import BaseModel, Field
 
 try:
     from .llm.model_registry import get_model_registry
+    from .llm.prompt_context import (
+        with_monitoring_evidence_context,
+        with_patient_answer_context,
+        with_patient_cctv_context,
+    )
     from .llm.strands_runtime import invoke_structured, invoke_text
     from .memory_schema import (
         MemoryEvent,
@@ -24,6 +29,11 @@ try:
     from .timezone_utils import LOCAL_TZ, now_local
 except ImportError:
     from llm.model_registry import get_model_registry
+    from llm.prompt_context import (
+        with_monitoring_evidence_context,
+        with_patient_answer_context,
+        with_patient_cctv_context,
+    )
     from llm.strands_runtime import invoke_structured, invoke_text
     from memory_schema import (
         MemoryEvent,
@@ -89,6 +99,24 @@ class ActivityEvidence(BaseModel):
     found: bool = False
     confidence: Literal["high", "medium", "low"] = "low"
     evidence: str = ""
+
+
+_SPEECH_RECALL_TERMS = (
+    "talk",
+    "talking",
+    "said",
+    "say",
+    "saying",
+    "discuss",
+    "discussed",
+    "discussing",
+    "mention",
+    "mentioned",
+    "mentioning",
+    "conversation",
+    "transcript",
+)
+
 
 MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 _mongo_client: Optional[AsyncIOMotorClient] = None
@@ -160,16 +188,23 @@ def _build_time_filter(
         end = now
         desc = f"the last {days} day{'s' if days != 1 else ''}"
     else:
-        try:
-            date = datetime.datetime.strptime(time_range, "%Y-%m-%d")
+        parsed_date: Optional[datetime.datetime] = None
+        for date_format in ("%Y-%m-%d", "%B %d %Y", "%B %d, %Y", "%b %d %Y", "%b %d, %Y"):
+            try:
+                parsed_date = datetime.datetime.strptime(time_range, date_format)
+                break
+            except ValueError:
+                continue
+
+        if parsed_date is not None:
             start = datetime.datetime.combine(
-                date.date(), datetime.time.min, tzinfo=LOCAL_TZ
+                parsed_date.date(), datetime.time.min, tzinfo=LOCAL_TZ
             )
             end = datetime.datetime.combine(
-                date.date(), datetime.time.max, tzinfo=LOCAL_TZ
+                parsed_date.date(), datetime.time.max, tzinfo=LOCAL_TZ
             )
-            desc = date.strftime("%B %d, %Y")
-        except ValueError:
+            desc = parsed_date.strftime("%B %d, %Y")
+        else:
             start = datetime.datetime.combine(
                 now.date(), datetime.time.min, tzinfo=LOCAL_TZ
             )
@@ -177,6 +212,57 @@ def _build_time_filter(
             desc = "today"
 
     return start, end, desc
+
+
+def _extract_time_range_from_query(query: str) -> str:
+    query_lower = query.lower()
+    if "yesterday" in query_lower:
+        return "yesterday"
+    if "today" in query_lower or "tonight" in query_lower:
+        return "today"
+    if "earlier" in query_lower or "recent" in query_lower:
+        return "recently"
+
+    hour_match = re.search(r"(?:last|past)\s+(\d+)\s+hours?", query_lower)
+    if hour_match:
+        return f"last {hour_match.group(1)} hours"
+
+    day_match = re.search(r"(?:last|past)\s+(\d+)\s+days?", query_lower)
+    if day_match:
+        return f"last {day_match.group(1)} days"
+
+    iso_match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", query)
+    if iso_match:
+        return iso_match.group(0)
+
+    natural_date_match = re.search(
+        r"\b(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|"
+        r"Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|"
+        r"Dec|December)\s+\d{1,2},?\s+\d{4}\b",
+        query,
+        flags=re.IGNORECASE,
+    )
+    if natural_date_match:
+        return natural_date_match.group(0)
+
+    return "today"
+
+
+def _looks_like_speech_recall(query: str) -> bool:
+    query_lower = query.lower()
+    return any(term in query_lower for term in _SPEECH_RECALL_TERMS)
+
+
+def _deterministic_time_plan(query: str) -> Optional[TimeQueryPlan]:
+    if _looks_like_speech_recall(query):
+        return TimeQueryPlan(
+            intent="transcripts",
+            time_range=_extract_time_range_from_query(query),
+            room_name=None,
+            activity=None,
+            hours=24,
+        )
+    return None
 
 
 async def _get_events(
@@ -216,7 +302,7 @@ async def _summarize_with_llm(
         )
 
     registry = get_model_registry()
-    prompt = (
+    prompt = with_monitoring_evidence_context(
         f'Question: "{user_query_context}"\n'
         f"Event log:\n{json.dumps(context_data, indent=2)}\n\n"
         "Respond in 2-3 short sentences. Be warm, clear, and mention specific "
@@ -224,9 +310,10 @@ async def _summarize_with_llm(
     )
     return await invoke_text(
         prompt=prompt,
-        system_prompt=(
+        system_prompt=with_patient_answer_context(
             "You are a compassionate memory assistant helping a dementia patient "
-            "recall recent activity."
+            "recall recent activity. Convert third-person monitoring descriptions "
+            "into direct second-person phrasing."
         ),
         model_id=registry.synthesis,
         max_tokens=500,
@@ -424,16 +511,17 @@ async def get_recent_transcripts(
             for event in speech_events
         ]
         registry = get_model_registry()
-        prompt = (
+        prompt = with_monitoring_evidence_context(
             f"Transcripts from {time_desc}{room_display}:\n"
             + "\n".join(f"- {entry}" for entry in transcripts)
             + "\n\nSummarize the main topics kindly and clearly in 2-3 sentences."
         )
         summary = await invoke_text(
             prompt=prompt,
-            system_prompt=(
+            system_prompt=with_patient_answer_context(
                 "You help a dementia patient remember what they were talking about. "
-                "Be warm, concise, and grounded in the transcript."
+                "Be warm, concise, and grounded in the transcript. Prefer the actual "
+                "audio transcript over video descriptions for speech questions."
             ),
             model_id=registry.synthesis,
             max_tokens=500,
@@ -486,7 +574,7 @@ async def check_activity(activity: str, hours: int = 24) -> ActivityCheckResult:
             )
 
         registry = get_model_registry()
-        prompt = (
+        prompt = with_monitoring_evidence_context(
             f'Activity to verify: "{activity}"\n'
             f"Records from {time_desc}:\n"
             + "\n".join(descriptions)
@@ -494,10 +582,11 @@ async def check_activity(activity: str, hours: int = 24) -> ActivityCheckResult:
         evidence = await invoke_structured(
             prompt=prompt,
             output_model=ActivityEvidence,
-            system_prompt=(
+            system_prompt=with_patient_cctv_context(
                 "You check whether a dementia patient likely performed a target "
                 "activity. Consider synonyms and related phrasing. Return grounded "
-                "evidence only."
+                "evidence only. Phrase evidence for patient-facing reuse with 'you' "
+                "when referring to the monitored patient."
             ),
             model_id=registry.synthesis,
             structured_output_prompt=(
@@ -540,11 +629,15 @@ async def check_activity(activity: str, hours: int = 24) -> ActivityCheckResult:
 
 
 async def _plan_time_query(query: str) -> TimeQueryPlan:
+    deterministic_plan = _deterministic_time_plan(query)
+    if deterministic_plan is not None:
+        return deterministic_plan
+
     registry = get_model_registry()
     return await invoke_structured(
         prompt=query,
         output_model=TimeQueryPlan,
-        system_prompt=(
+        system_prompt=with_patient_cctv_context(
             "You route dementia-memory questions into one of four intents: "
             "timeline, transcripts, activity_check, or general. "
             "Timeline is for activity history or room history. "
@@ -554,7 +647,10 @@ async def _plan_time_query(query: str) -> TimeQueryPlan:
         model_id=registry.router,
         structured_output_prompt=(
             "Extract the intent, time range, optional room name, optional activity, "
-            "and hours if the user is asking to verify an activity."
+            "and hours if the user is asking to verify an activity. Use YYYY-MM-DD "
+            "for explicit calendar dates. Choose transcripts for questions like "
+            "'what was I talking about today', 'what was I saying today', and "
+            "'did I talk about X today'."
         ),
         max_tokens=300,
     )
@@ -601,7 +697,7 @@ async def run_time_query(query: str) -> TimeResult:
         registry = get_model_registry()
         text = await invoke_text(
             prompt=query,
-            system_prompt=(
+            system_prompt=with_patient_answer_context(
                 "You are a kind memory assistant for a dementia patient. "
                 "Answer briefly and do not promise unsupported features."
             ),

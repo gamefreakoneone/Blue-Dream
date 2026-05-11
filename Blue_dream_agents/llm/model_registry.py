@@ -12,7 +12,7 @@ except ImportError:
 
 
 class ModelRegistry(BaseModel):
-    """Task-to-model mapping for the active Nova runtime."""
+    """Task-to-model mapping for the active local/legacy runtime."""
 
     router: str
     synthesis: str
@@ -31,10 +31,23 @@ class ModelRegistry(BaseModel):
 @lru_cache(maxsize=1)
 def get_model_registry() -> ModelRegistry:
     settings = get_provider_settings()
+    router_model = settings.nova_router_model
+    synthesis_model = settings.nova_synthesis_model
+    vision_model = settings.nova_vision_model
+    vision_fallback_model = settings.nova_vision_fallback_model
+    embedding_model = settings.nova_embedding_model
+    if settings.local_llm_provider == "ollama":
+        router_model = settings.gemma_text_model
+        synthesis_model = settings.gemma_text_model
+        vision_model = settings.gemma_vision_model
+        vision_fallback_model = settings.gemma_vision_model
+    if settings.embedding_provider == "ollama":
+        embedding_model = settings.local_embedding_model
+
     return ModelRegistry(
-        router=settings.nova_router_model,
-        synthesis=settings.nova_synthesis_model,
-        vision=settings.nova_vision_model,
-        vision_fallback=settings.nova_vision_fallback_model,
-        embedding=settings.nova_embedding_model,
+        router=router_model,
+        synthesis=synthesis_model,
+        vision=vision_model,
+        vision_fallback=vision_fallback_model,
+        embedding=embedding_model,
     )

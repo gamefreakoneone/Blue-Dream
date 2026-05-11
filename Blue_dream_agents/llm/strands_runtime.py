@@ -9,9 +9,19 @@ from pydantic import BaseModel
 
 try:
     from .bedrock_client import get_bedrock_boto_config, get_bedrock_region
+    from .ollama_runtime import (
+        invoke_multimodal_structured as invoke_ollama_multimodal_structured,
+        invoke_structured as invoke_ollama_structured,
+        invoke_text as invoke_ollama_text,
+    )
     from .settings import get_provider_settings
 except ImportError:
     from bedrock_client import get_bedrock_boto_config, get_bedrock_region
+    from ollama_runtime import (
+        invoke_multimodal_structured as invoke_ollama_multimodal_structured,
+        invoke_structured as invoke_ollama_structured,
+        invoke_text as invoke_ollama_text,
+    )
     from settings import get_provider_settings
 
 try:
@@ -129,6 +139,17 @@ async def invoke_text(
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
 ) -> str:
+    settings = get_provider_settings()
+    if settings.local_llm_provider == "ollama":
+        return await invoke_ollama_text(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            model_id=model_id,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
     last_error: Optional[Exception] = None
     for candidate_model_id in _candidate_model_ids(model_id):
         try:
@@ -160,6 +181,19 @@ async def invoke_structured(
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
 ) -> T:
+    settings = get_provider_settings()
+    if settings.local_llm_provider == "ollama":
+        return await invoke_ollama_structured(
+            prompt=prompt,
+            output_model=output_model,
+            system_prompt=system_prompt,
+            model_id=model_id,
+            tools=tools,
+            structured_output_prompt=structured_output_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
     last_error: Optional[Exception] = None
     for candidate_model_id in _candidate_model_ids(model_id):
         try:
@@ -226,6 +260,20 @@ async def invoke_multimodal_structured(
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
 ) -> T:
+    settings = get_provider_settings()
+    if settings.local_llm_provider == "ollama":
+        return await invoke_ollama_multimodal_structured(
+            text_prompt=text_prompt,
+            image_path=image_path,
+            output_model=output_model,
+            system_prompt=system_prompt,
+            model_id=model_id,
+            fallback_model_id=fallback_model_id,
+            structured_output_prompt=structured_output_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
     prompt = _build_image_prompt(text_prompt, image_path)
     try:
         return await invoke_structured(

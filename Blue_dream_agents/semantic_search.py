@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
@@ -13,13 +12,19 @@ from pydantic import BaseModel, Field
 try:
     from .llm.embedding_client import embed_text
     from .llm.model_registry import get_model_registry
+    from .llm.prompt_context import (
+        with_monitoring_evidence_context,
+        with_patient_answer_context,
+        with_patient_cctv_context,
+    )
     from .llm.settings import get_provider_settings
     from .llm.strands_runtime import invoke_text
     from .memory_schema import MemoryEvent, memory_event_from_mongo
     from .vector_store import (
-        PRODUCTION_EMBEDDING_DIMENSION,
         count_indexed_events,
         delete_event_ids,
+        get_embedding_dimension,
+        get_embedding_metadata,
         inspect_production_index,
         query_similar_embeddings,
         reset_production_index,
@@ -28,13 +33,19 @@ try:
 except ImportError:
     from llm.embedding_client import embed_text
     from llm.model_registry import get_model_registry
+    from llm.prompt_context import (
+        with_monitoring_evidence_context,
+        with_patient_answer_context,
+        with_patient_cctv_context,
+    )
     from llm.settings import get_provider_settings
     from llm.strands_runtime import invoke_text
     from memory_schema import MemoryEvent, memory_event_from_mongo
     from vector_store import (
-        PRODUCTION_EMBEDDING_DIMENSION,
         count_indexed_events,
         delete_event_ids,
+        get_embedding_dimension,
+        get_embedding_metadata,
         inspect_production_index,
         query_similar_embeddings,
         reset_production_index,
@@ -68,7 +79,6 @@ class SemanticSearchResult(BaseModel):
     matches: List[SemanticMatch] = Field(default_factory=list)
 
 
-MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 _mongo_client: Optional[AsyncIOMotorClient] = None
 _sync_lock = asyncio.Lock()
 _index_bootstrapped = False
@@ -77,7 +87,7 @@ _index_bootstrapped = False
 def get_mongo_client() -> AsyncIOMotorClient:
     global _mongo_client
     if _mongo_client is None:
-        _mongo_client = AsyncIOMotorClient(MONGO_URI)
+        _mongo_client = AsyncIOMotorClient(get_provider_settings().mongodb_uri)
     return _mongo_client
 
 
@@ -98,7 +108,7 @@ async def index_memory_event(event: MemoryEvent) -> None:
         embed_text,
         event.semantic_text,
         "document",
-        PRODUCTION_EMBEDDING_DIMENSION,
+        get_embedding_dimension(),
     )
     await _run_blocking(upsert_event_embedding, event, embedding)
 
@@ -131,13 +141,42 @@ async def _fetch_events_by_ids(event_ids: list[str]) -> list[MemoryEvent]:
     return [events_by_id[event_id] for event_id in event_ids if event_id in events_by_id]
 
 
+async def _count_mongo_events() -> int:
+    collection = get_mongo_client().dementia_assistance.events
+    return int(await collection.count_documents({}))
+
+
+async def _index_all_mongo_events() -> bool:
+    collection = get_mongo_client().dementia_assistance.events
+    indexed_any = False
+    async for doc in collection.find().sort("timestamp", 1):
+        event = memory_event_from_mongo(doc)
+        try:
+            await index_memory_event(event)
+            indexed_any = True
+        except Exception as exc:
+            logger.warning(
+                "Skipping semantic bootstrap for event %s: %s",
+                event.event_id,
+                exc,
+            )
+    return indexed_any
+
+
 def _index_requires_reset(index_state: dict[str, Any]) -> bool:
     if index_state.get("error"):
         return True
 
     dimension = index_state.get("dimension")
-    if dimension not in (None, PRODUCTION_EMBEDDING_DIMENSION):
+    expected_metadata = get_embedding_metadata()
+    if dimension not in (None, expected_metadata["embedding_dimension"]):
         return True
+
+    metadata = index_state.get("metadata") or {}
+    if index_state.get("collection_exists"):
+        for key, expected_value in expected_metadata.items():
+            if metadata.get(key) != expected_value:
+                return True
 
     return bool(index_state.get("smoke_test_count"))
 
@@ -166,23 +205,22 @@ async def ensure_semantic_index_synced(force_rebuild: bool = False) -> str:
             indexed_count = 0
             index_status = "reset"
 
+        mongo_count = await _count_mongo_events()
         if indexed_count > 0:
+            if mongo_count and indexed_count < mongo_count:
+                logger.info(
+                    "Semantic index has %s events but Mongo has %s; syncing missing events.",
+                    indexed_count,
+                    mongo_count,
+                )
+                indexed_any = await _index_all_mongo_events()
+                _index_bootstrapped = True
+                if indexed_any:
+                    return "synced" if index_status == "ready" else "recovered"
             _index_bootstrapped = True
             return "ready" if index_status == "ready" else "recovered"
 
-        collection = get_mongo_client().dementia_assistance.events
-        indexed_any = False
-        async for doc in collection.find().sort("timestamp", 1):
-            event = memory_event_from_mongo(doc)
-            try:
-                await index_memory_event(event)
-                indexed_any = True
-            except Exception as exc:
-                logger.warning(
-                    "Skipping semantic bootstrap for event %s: %s",
-                    event.event_id,
-                    exc,
-                )
+        indexed_any = await _index_all_mongo_events()
 
         _index_bootstrapped = True
         if indexed_any:
@@ -221,7 +259,7 @@ async def _summarize_matches(query: str, events: list[MemoryEvent]) -> str:
         }
         for event in events
     ]
-    prompt = (
+    prompt = with_monitoring_evidence_context(
         f'User question: "{query}"\n'
         f"Relevant memory events:\n{json.dumps(context, indent=2)}\n\n"
         "Answer in 2-3 short sentences. Be specific, grounded, and mention uncertainty "
@@ -229,9 +267,11 @@ async def _summarize_matches(query: str, events: list[MemoryEvent]) -> str:
     )
     return await invoke_text(
         prompt=prompt,
-        system_prompt=(
+        system_prompt=with_patient_answer_context(
             "You are a memory assistant for a dementia-support system. Answer only "
-            "from the supplied memory events and do not fabricate details."
+            "from the supplied memory events and do not fabricate details. Speak "
+            "directly to the patient as 'you' when generic monitoring evidence "
+            "describes the patient."
         ),
         model_id=registry.synthesis,
         max_tokens=500,
@@ -248,7 +288,7 @@ async def run_semantic_query(query: str) -> SemanticSearchResult:
             embed_text,
             query,
             "query",
-            PRODUCTION_EMBEDDING_DIMENSION,
+            get_embedding_dimension(),
         )
         raw_matches = await _run_blocking(query_similar_embeddings, query_embedding, top_k)
         if not raw_matches:
@@ -319,7 +359,22 @@ async def run_semantic_query(query: str) -> SemanticSearchResult:
 
 async def run_semantic_smoke_test(
     query: str = "What was I talking about earlier?",
+    force_rebuild: bool = False,
 ) -> dict[str, Any]:
+    rebuild_status = "not_run"
+    if force_rebuild:
+        rebuild_status = await ensure_semantic_index_synced(force_rebuild=True)
+    else:
+        rebuild_status = await ensure_semantic_index_synced()
+
+    mongo_event_count = await _count_mongo_events()
+    index_count: int | None = None
+    index_count_error: str | None = None
+    try:
+        index_count = await _run_blocking(count_indexed_events)
+    except Exception as exc:
+        index_count_error = str(exc)
+
     result = await run_semantic_query(query)
     return {
         "success": result.success,
@@ -327,6 +382,11 @@ async def run_semantic_smoke_test(
         "top_k": result.top_k,
         "text": result.text,
         "index_status": result.index_status,
+        "rebuild_status": rebuild_status,
+        "mongo_event_count": mongo_event_count,
+        "index_count": index_count,
+        "index_count_error": index_count_error,
+        "embedding": get_embedding_metadata(),
         "event_ids": [match.event_id for match in result.matches],
     }
 

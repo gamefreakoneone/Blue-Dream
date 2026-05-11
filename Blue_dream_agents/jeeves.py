@@ -8,12 +8,22 @@ from pydantic import BaseModel, Field
 
 try:
     from .llm.model_registry import get_model_registry
+    from .llm.prompt_context import (
+        with_monitoring_evidence_context,
+        with_patient_answer_context,
+        with_patient_cctv_context,
+    )
     from .llm.strands_runtime import invoke_structured, invoke_text
     from .object_detector import run_object_query
     from .semantic_search import SemanticSearchResult, run_semantic_query
     from .time_agent import TimeWindowContext, get_time_window_context, run_time_query
 except ImportError:
     from llm.model_registry import get_model_registry
+    from llm.prompt_context import (
+        with_monitoring_evidence_context,
+        with_patient_answer_context,
+        with_patient_cctv_context,
+    )
     from llm.strands_runtime import invoke_structured, invoke_text
     from object_detector import run_object_query
     from semantic_search import SemanticSearchResult, run_semantic_query
@@ -53,6 +63,33 @@ class SemanticDecision(BaseModel):
     reason: str = ""
 
 
+_SPEECH_RECALL_TERMS = (
+    "talk",
+    "talking",
+    "said",
+    "say",
+    "saying",
+    "discuss",
+    "discussed",
+    "discussing",
+    "mention",
+    "mentioned",
+    "mentioning",
+    "conversation",
+    "transcript",
+)
+_TIME_REFERENCE_TERMS = (
+    "today",
+    "yesterday",
+    "earlier",
+    "recently",
+    "tonight",
+    "this morning",
+    "this afternoon",
+    "this evening",
+)
+
+
 def _build_activity_response(text: str, data: dict[str, Any]) -> JeevesResponse:
     return JeevesResponse(
         response_type="activity",
@@ -62,25 +99,59 @@ def _build_activity_response(text: str, data: dict[str, Any]) -> JeevesResponse:
     )
 
 
+def _looks_like_speech_recall(query: str) -> bool:
+    query_lower = query.lower()
+    return any(term in query_lower for term in _SPEECH_RECALL_TERMS)
+
+
+def _has_time_reference(query: str) -> bool:
+    query_lower = query.lower()
+    if any(term in query_lower for term in _TIME_REFERENCE_TERMS):
+        return True
+    return any(char.isdigit() for char in query_lower)
+
+
+def _deterministic_route(query: str) -> Optional[QueryRoute]:
+    query_lower = query.lower()
+    if _looks_like_speech_recall(query) and (
+        _has_time_reference(query) or query_lower.startswith("did i talk")
+    ):
+        return QueryRoute(
+            intent="time",
+            reason="Transcript recall questions with a time reference use the time agent.",
+        )
+    return None
+
+
 async def _route_query(query: str) -> QueryRoute:
+    deterministic_route = _deterministic_route(query)
+    if deterministic_route is not None:
+        return deterministic_route
+
     registry = get_model_registry()
     return await invoke_structured(
         prompt=query,
         output_model=QueryRoute,
-        system_prompt=(
+        system_prompt=with_patient_cctv_context(
             "You route user queries for a dementia-support assistant. "
             "Choose 'object' for misplaced physical item searches. "
-            "Choose 'time' for explicit time ranges, room history, timelines, or "
-            "questions that are mainly temporal. "
+            "Choose 'time' for explicit time ranges, dates, day words like today "
+            "or yesterday, room history, timelines, activity history, or questions "
+            "asking what the patient was doing during a period. "
             "Choose 'semantic' for fuzzy recall about what was said, discussed, "
-            "wanted, or why something was mentioned. "
+            "wanted, or why something was mentioned when the user is not mainly "
+            "asking for a timeline or activity history. "
             "Choose 'general' for greetings or normal assistant chat."
         ),
         model_id=registry.router,
         structured_output_prompt=(
             "Return the single best intent and a short reason. "
-            "Prefer semantic for conversational memory questions unless the user is "
-            "clearly asking for a timeline."
+            "Prefer time for 'what was I doing today/yesterday/earlier/on DATE' "
+            "and other activity-history questions. Prefer semantic for "
+            "conversational memory questions like 'what did I say/discuss/mention' "
+            "unless the user is clearly asking for a transcript over a day, date, "
+            "or recent time range. Use time for 'what was I talking about today' "
+            "and 'did I talk about X today'."
         ),
         max_tokens=300,
     )
@@ -104,6 +175,21 @@ def _semantic_prompt_matches(result: SemanticSearchResult) -> list[dict[str, Any
     return matches
 
 
+def _semantic_answer_matches(result: SemanticSearchResult) -> list[dict[str, Any]]:
+    matches: list[dict[str, Any]] = []
+    for match in result.matches:
+        matches.append(
+            {
+                "timestamp": match.timestamp,
+                "room_name": match.room_name,
+                "audio_transcript": match.audio_transcript[:1200],
+                "video_description": match.video_description[:1200],
+                "semantic_text": match.semantic_text[:1500],
+            }
+        )
+    return matches
+
+
 async def _judge_semantic_retrieval(
     query: str, semantic_result: SemanticSearchResult
 ) -> SemanticDecision:
@@ -115,7 +201,7 @@ async def _judge_semantic_retrieval(
         "match_count": semantic_result.match_count,
         "matches": _semantic_prompt_matches(semantic_result),
     }
-    prompt = (
+    prompt = with_monitoring_evidence_context(
         f'User question: "{query}"\n'
         f"Semantic retrieval evidence:\n{json.dumps(semantic_payload, indent=2)}\n\n"
         "Decide whether the semantic evidence is trustworthy enough to answer "
@@ -125,7 +211,7 @@ async def _judge_semantic_retrieval(
     return await invoke_structured(
         prompt=prompt,
         output_model=SemanticDecision,
-        system_prompt=(
+        system_prompt=with_patient_cctv_context(
             "You are the retrieval judge for a dementia-support memory assistant. "
             "Choose use_semantic_plus_time_window when semantic hits are relevant "
             "but the final answer should be verified with nearby timeline or "
@@ -158,20 +244,38 @@ async def _synthesize_semantic_answer(
     registry = get_model_registry()
     prompt_payload: dict[str, Any] = {
         "query": query,
-        "decision": decision.model_dump(mode="json"),
-        "semantic_matches": _semantic_prompt_matches(semantic_result),
+        "semantic_matches": _semantic_answer_matches(semantic_result),
     }
     if time_window is not None:
-        prompt_payload["time_window"] = time_window.model_dump(mode="json")
+        prompt_payload["time_window"] = {
+            "success": time_window.success,
+            "event_count": time_window.event_count,
+            "time_range": time_window.time_range,
+            "room_name": time_window.room_name,
+            "summary": time_window.summary,
+            "transcripts": time_window.transcripts,
+            "events": [
+                {
+                    "timestamp": event.get("timestamp"),
+                    "room_name": event.get("room_name"),
+                    "video_description": event.get("video_description"),
+                    "audio_transcript": event.get("audio_transcript"),
+                }
+                for event in time_window.events
+            ],
+        }
 
     return await invoke_text(
-        prompt=json.dumps(prompt_payload, indent=2),
-        system_prompt=(
+        prompt=with_monitoring_evidence_context(
+            "Evidence bundle:\n" + json.dumps(prompt_payload, indent=2)
+        ),
+        system_prompt=with_patient_answer_context(
             "You are Jeeves, a grounded memory assistant for a dementia-support "
             "system. Synthesize a concise answer using only the supplied evidence. "
             "Prefer transcript evidence when it directly answers the user's question. "
             "Mention uncertainty when the evidence is partial. Do not invent reasons, "
-            "times, or conversations that are not present in the evidence."
+            "times, or conversations that are not present in the evidence. Answer the "
+            "question directly; do not describe why one event was selected."
         ),
         model_id=registry.synthesis,
         max_tokens=500,
@@ -246,7 +350,7 @@ async def _handle_general_query(query: str) -> JeevesResponse:
     registry = get_model_registry()
     text = await invoke_text(
         prompt=query,
-        system_prompt=(
+        system_prompt=with_patient_answer_context(
             "You are a kind, concise assistant for a dementia-support system. "
             "Answer naturally and do not promise unsupported features."
         ),

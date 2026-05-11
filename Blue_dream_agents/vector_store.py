@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import shutil
 import sqlite3
-import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -25,7 +24,7 @@ if TYPE_CHECKING:
         from memory_schema import MemoryEvent
 
 
-PRODUCTION_EMBEDDING_DIMENSION = 1024
+PRODUCTION_EMBEDDING_DIMENSION = 768
 
 
 def _ensure_chroma_available() -> None:
@@ -42,6 +41,36 @@ def _normalize_path(path: str) -> str:
 
 def _wrap_chroma_error(action: str, exc: BaseException) -> RuntimeError:
     return RuntimeError(f"ChromaDB failed while trying to {action}: {exc}")
+
+
+def _read_collection_metadata(
+    cursor: sqlite3.Cursor, collection_id: str
+) -> dict[str, Any]:
+    try:
+        cursor.execute("PRAGMA table_info(collection_metadata)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if not columns:
+            return {}
+
+        cursor.execute(
+            "SELECT * FROM collection_metadata WHERE collection_id = ?",
+            (collection_id,),
+        )
+        rows = cursor.fetchall()
+    except sqlite3.Error:
+        return {}
+
+    metadata: dict[str, Any] = {}
+    for row in rows:
+        values = dict(zip(columns, row))
+        key = values.get("key")
+        if not key:
+            continue
+        for value_column in ("str_value", "int_value", "float_value", "bool_value"):
+            if value_column in values and values[value_column] is not None:
+                metadata[str(key)] = values[value_column]
+                break
+    return metadata
 
 
 @lru_cache(maxsize=4)
@@ -62,6 +91,24 @@ def clear_cached_clients() -> None:
 def get_chroma_client(persist_dir: Optional[str] = None):
     settings = get_provider_settings()
     return _get_cached_persistent_client(persist_dir or settings.chroma_persist_dir)
+
+
+def get_embedding_dimension() -> int:
+    return get_provider_settings().chroma_embedding_dimension
+
+
+def get_embedding_metadata() -> dict[str, Any]:
+    settings = get_provider_settings()
+    model_name = (
+        settings.local_embedding_model
+        if settings.embedding_provider == "ollama"
+        else settings.nova_embedding_model
+    )
+    return {
+        "embedding_provider": settings.embedding_provider,
+        "embedding_model": model_name,
+        "embedding_dimension": settings.chroma_embedding_dimension,
+    }
 
 
 def _get_collection(
@@ -93,7 +140,7 @@ def get_event_collection(
         collection_name=collection_name or settings.chroma_collection_name,
         metadata={
             "purpose": "semantic_memory_search",
-            "embedding_dimension": PRODUCTION_EMBEDDING_DIMENSION,
+            **get_embedding_metadata(),
         },
     )
 
@@ -103,12 +150,14 @@ def count_indexed_events() -> int:
 
 
 def upsert_event_embedding(event: MemoryEvent, embedding: list[float]) -> None:
-    if len(embedding) != PRODUCTION_EMBEDDING_DIMENSION:
+    expected_dimension = get_embedding_dimension()
+    if len(embedding) != expected_dimension:
         raise ValueError(
             "Semantic embeddings must be "
-            f"{PRODUCTION_EMBEDDING_DIMENSION} dimensions, got {len(embedding)}."
+            f"{expected_dimension} dimensions, got {len(embedding)}."
         )
 
+    embedding_metadata = get_embedding_metadata()
     get_event_collection().upsert(
         ids=[event.event_id],
         embeddings=[embedding],
@@ -119,6 +168,7 @@ def upsert_event_embedding(event: MemoryEvent, embedding: list[float]) -> None:
                 "room_name": event.room_name,
                 "timestamp": event.timestamp.isoformat(),
                 "has_screenshot": bool(event.screenshot_path),
+                **embedding_metadata,
             }
         ],
     )
@@ -127,10 +177,11 @@ def upsert_event_embedding(event: MemoryEvent, embedding: list[float]) -> None:
 def query_similar_embeddings(
     embedding: list[float], top_k: int
 ) -> list[dict[str, Any]]:
-    if len(embedding) != PRODUCTION_EMBEDDING_DIMENSION:
+    expected_dimension = get_embedding_dimension()
+    if len(embedding) != expected_dimension:
         raise ValueError(
             "Semantic query embeddings must be "
-            f"{PRODUCTION_EMBEDDING_DIMENSION} dimensions, got {len(embedding)}."
+            f"{expected_dimension} dimensions, got {len(embedding)}."
         )
 
     results = get_event_collection().query(
@@ -171,6 +222,8 @@ def inspect_production_index() -> dict[str, Any]:
         "sqlite_exists": sqlite_path.exists(),
         "collection_exists": False,
         "dimension": None,
+        "metadata": {},
+        "expected_metadata": get_embedding_metadata(),
         "queue_count": 0,
         "smoke_test_count": 0,
         "error": None,
@@ -190,6 +243,7 @@ def inspect_production_index() -> dict[str, Any]:
             state["collection_exists"] = True
             state["collection_id"] = row[0]
             state["dimension"] = row[1]
+            state["metadata"] = _read_collection_metadata(cursor, row[0])
 
         cursor.execute("SELECT COUNT(*) FROM embeddings_queue")
         state["queue_count"] = int(cursor.fetchone()[0])
@@ -214,37 +268,42 @@ def reset_production_index() -> str:
     persist_dir = Path(settings.chroma_persist_dir)
     clear_cached_clients()
     if persist_dir.exists():
-        shutil.rmtree(persist_dir, ignore_errors=True)
+        try:
+            shutil.rmtree(persist_dir)
+        except OSError:
+            pass
     persist_dir.mkdir(parents=True, exist_ok=True)
     return str(persist_dir)
 
 
 def run_vector_store_smoke_test() -> dict[str, Any]:
+    _ensure_chroma_available()
     test_id = "semantic-smoke-test"
-    first_embedding = [0.001] * PRODUCTION_EMBEDDING_DIMENSION
-    second_embedding = [0.001] * PRODUCTION_EMBEDDING_DIMENSION
+    embedding_dimension = get_embedding_dimension()
+    first_embedding = [0.001] * embedding_dimension
+    second_embedding = [0.001] * embedding_dimension
 
-    with tempfile.TemporaryDirectory(prefix="blue-dream-chroma-smoke-") as temp_dir:
-        collection = _get_collection(
-            persist_dir=temp_dir,
-            collection_name="semantic_smoke_test",
-            metadata={
-                "purpose": "semantic_memory_smoke_test",
-                "embedding_dimension": PRODUCTION_EMBEDDING_DIMENSION,
-            },
-        )
-        collection.upsert(
-            ids=[test_id],
-            embeddings=[first_embedding],
-            metadatas=[{"purpose": "smoke_test"}],
-        )
-        results = collection.query(query_embeddings=[second_embedding], n_results=1)
-        ids = results.get("ids", [[]])[0]
-        return {
-            "top_match": ids[0] if ids else None,
-            "match_count": len(ids),
-            "persist_dir": temp_dir,
-        }
+    client = chromadb.EphemeralClient()
+    collection = client.get_or_create_collection(
+        name="semantic_smoke_test",
+        metadata={
+            "purpose": "semantic_memory_smoke_test",
+            **get_embedding_metadata(),
+        },
+    )
+    collection.upsert(
+        ids=[test_id],
+        embeddings=[first_embedding],
+        metadatas=[{"purpose": "smoke_test"}],
+    )
+    results = collection.query(query_embeddings=[second_embedding], n_results=1)
+    ids = results.get("ids", [[]])[0]
+    return {
+        "top_match": ids[0] if ids else None,
+        "match_count": len(ids),
+        "embedding_dimension": embedding_dimension,
+        "persist_dir": None,
+    }
 
 
 if __name__ == "__main__":

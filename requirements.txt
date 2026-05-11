@@ -11,6 +11,7 @@ google-genai         # Gemini API for video analysis
 google-auth-oauthlib # Gmail OAuth flow
 google-api-python-client # Gmail API client
 openai               # OpenAI API for transcription and image editing
+httpx                # Local Ollama HTTP runtime client
 strands-agents       # Strands runtime over native Amazon Bedrock
 boto3                # Native Amazon Bedrock client/auth stack
 

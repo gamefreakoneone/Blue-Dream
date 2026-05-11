@@ -66,11 +66,15 @@ def resolve_gemini_spatial_model() -> str:
 
 
 class ProviderSettings(BaseModel):
-    """Centralized runtime settings for Bedrock-native Nova calls."""
+    """Centralized runtime settings for local Gemma and legacy provider calls."""
 
     model_config = ConfigDict(extra="ignore")
 
-    bedrock_auth_mode: Literal["aws_credentials", "api_key"] = Field(
+    local_llm_provider: Literal["ollama", "bedrock"] = Field(default="ollama")
+    ollama_base_url: str = Field(default="http://localhost:11434")
+    gemma_text_model: str = Field(default="gemma4:e2b")
+    gemma_vision_model: str = Field(default="gemma4:e2b")
+    bedrock_auth_mode: Literal["aws_credentials", "api_key", "unavailable"] = Field(
         description="Selected Bedrock authentication mode"
     )
     bedrock_region: str = Field(description="Resolved Bedrock region")
@@ -91,6 +95,9 @@ class ProviderSettings(BaseModel):
     nova_embedding_model: str = Field(
         default="amazon.nova-2-multimodal-embeddings-v1:0"
     )
+    embedding_provider: Literal["ollama", "bedrock"] = Field(default="ollama")
+    local_embedding_model: str = Field(default="nomic-embed-text")
+    chroma_embedding_dimension: int = Field(default=768)
     chroma_persist_dir: str = Field(default_factory=_default_chroma_persist_dir)
     chroma_collection_name: str = Field(default="memory_events")
     semantic_search_top_k: int = Field(default=5)
@@ -133,26 +140,58 @@ def _resolve_regions() -> tuple[str, str]:
     return aws_region, api_key_region
 
 
+def _resolve_local_llm_provider() -> Literal["ollama", "bedrock"]:
+    provider = (os.getenv("LOCAL_LLM_PROVIDER") or "ollama").strip().lower()
+    if provider in ("ollama", "local", "gemma"):
+        return "ollama"
+    if provider in ("bedrock", "nova", "aws"):
+        return "bedrock"
+    return "ollama"
+
+
+def _resolve_embedding_provider() -> Literal["ollama", "bedrock"]:
+    provider = (os.getenv("EMBEDDING_PROVIDER") or "ollama").strip().lower()
+    if provider in ("ollama", "local"):
+        return "ollama"
+    if provider in ("bedrock", "nova", "aws"):
+        return "bedrock"
+    return "ollama"
+
+
 @lru_cache(maxsize=1)
 def get_provider_settings() -> ProviderSettings:
     load_project_env()
 
     aws_region, api_key_region = _resolve_regions()
     bearer_token = os.getenv("AWS_BEARER_TOKEN_BEDROCK")
+    local_llm_provider = _resolve_local_llm_provider()
 
     if _has_aws_credentials():
-        auth_mode: Literal["aws_credentials", "api_key"] = "aws_credentials"
+        auth_mode: Literal["aws_credentials", "api_key", "unavailable"] = (
+            "aws_credentials"
+        )
         bedrock_region = aws_region
     elif bearer_token:
         auth_mode = "api_key"
         bedrock_region = api_key_region
+    elif local_llm_provider == "ollama":
+        auth_mode = "unavailable"
+        bedrock_region = api_key_region
     else:
         raise RuntimeError(
             "Missing Bedrock credentials. Configure AWS credentials or "
-            "set AWS_BEARER_TOKEN_BEDROCK."
+            "set AWS_BEARER_TOKEN_BEDROCK, or set LOCAL_LLM_PROVIDER=ollama "
+            "for local Gemma text reasoning."
         )
 
     return ProviderSettings(
+        local_llm_provider=local_llm_provider,
+        ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+        gemma_text_model=os.getenv("GEMMA_TEXT_MODEL", "gemma4:e2b"),
+        gemma_vision_model=os.getenv(
+            "GEMMA_VISION_MODEL",
+            os.getenv("GEMMA_TEXT_MODEL", "gemma4:e2b"),
+        ),
         bedrock_auth_mode=auth_mode,
         bedrock_region=bedrock_region,
         bedrock_aws_region=aws_region,
@@ -176,6 +215,9 @@ def get_provider_settings() -> ProviderSettings:
         nova_embedding_model=os.getenv(
             "NOVA_EMBEDDING_MODEL", "amazon.nova-2-multimodal-embeddings-v1:0"
         ),
+        embedding_provider=_resolve_embedding_provider(),
+        local_embedding_model=os.getenv("LOCAL_EMBEDDING_MODEL", "nomic-embed-text"),
+        chroma_embedding_dimension=int(os.getenv("CHROMA_EMBEDDING_DIMENSION", "768")),
         chroma_persist_dir=os.getenv(
             "CHROMA_PERSIST_DIR", _default_chroma_persist_dir()
         ),

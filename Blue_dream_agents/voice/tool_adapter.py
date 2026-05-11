@@ -4,8 +4,10 @@ import json
 from typing import Any
 
 try:
+    from ..llm.prompt_context import with_patient_cctv_context
     from ..jeeves import run_single_query
 except ImportError:
+    from llm.prompt_context import with_patient_cctv_context
     from jeeves import run_single_query
 
 
@@ -22,7 +24,7 @@ QUERY_MEMORIA_INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
-VOICE_SYSTEM_PROMPT = (
+VOICE_SYSTEM_PROMPT = with_patient_cctv_context(
     "You are Memoria, a warm and concise voice assistant for a dementia-support "
     "system. For every intentional user request, always call the query_memoria "
     "tool with the user's spoken request rewritten as a standalone text query. "

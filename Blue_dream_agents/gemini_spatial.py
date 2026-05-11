@@ -39,6 +39,7 @@ class GeminiSpatialResult(BaseModel):
     found: bool = False
     bounding_box: Optional[GeminiBoundingBox] = None
     raw_text: str = ""
+    error: Optional[str] = None
 
 
 def strip_json_fences(raw_text: str) -> str:
@@ -164,8 +165,10 @@ def _build_localization_prompt(
     grounding_text: Optional[str] = None,
 ) -> str:
     prompt_lines = [
-        f"Find the single best bounding box for the object '{object_name}'.",
-        "Return a JSON array only.",
+        f"Detect the 2D bounding box of the object '{object_name}'.",
+        "Return a JSON array only, using the format "
+        '[{"box_2d": [y1, x1, y2, x2], "label": "object label"}].',
+        "Coordinates must be normalized from 0 to 1000 and ordered as y1, x1, y2, x2.",
         "If the object is not visible, return [].",
     ]
     if matched_object and matched_object.strip() and matched_object != object_name:
@@ -292,9 +295,31 @@ async def localize_object_with_gemini(
         logger.warning(
             "Gemini highlight localization failed for %s: %s", object_name, exc
         )
-        return GeminiSpatialResult(found=False, raw_text="")
+        return GeminiSpatialResult(found=False, raw_text="", error=str(exc))
 
     return parse_gemini_spatial_response(raw_text)
+
+
+async def render_highlighted_image(
+    *,
+    image_path: str,
+    object_name: str,
+    bounding_box: GeminiBoundingBox,
+    output_dir: str = "Storage/highlighted",
+) -> Optional[str]:
+    try:
+        return await asyncio.to_thread(
+            _save_highlighted_image,
+            image_path,
+            object_name,
+            bounding_box,
+            output_dir,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Gemini highlight rendering failed for %s: %s", object_name, exc
+        )
+        return None
 
 
 async def highlight_object_with_gemini(
@@ -314,16 +339,9 @@ async def highlight_object_with_gemini(
     if not result.found or result.bounding_box is None:
         return None
 
-    try:
-        return await asyncio.to_thread(
-            _save_highlighted_image,
-            image_path,
-            matched_object or object_name,
-            result.bounding_box,
-            output_dir,
-        )
-    except Exception as exc:
-        logger.warning(
-            "Gemini highlight rendering failed for %s: %s", object_name, exc
-        )
-        return None
+    return await render_highlighted_image(
+        image_path=image_path,
+        object_name=matched_object or object_name,
+        bounding_box=result.bounding_box,
+        output_dir=output_dir,
+    )
