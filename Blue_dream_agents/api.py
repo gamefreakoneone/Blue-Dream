@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import logging
 import os
 import sys
 
@@ -9,6 +10,15 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from jeeves import run_single_query
+
+logger = logging.getLogger(__name__)
+
+# Configure logging to show INFO level for our modules
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 app = FastAPI(title="Jeeves API")
 
@@ -29,9 +39,19 @@ class QueryRequest(BaseModel):
 @app.post("/query")
 async def query_jeeves(request: QueryRequest):
     try:
+        logger.info("[API] Received query: '%s'", request.query[:100])
         response = await run_single_query(request.query)
+        logger.info(
+            "[API] Response: type=%s, has_image=%s, text_length=%d",
+            response.response_type,
+            bool(response.image_path),
+            len(response.text),
+        )
+        if response.image_path:
+            logger.info("[API] Image path in response: %s", response.image_path)
         return response.model_dump()
     except Exception as e:
+        logger.exception("[API] Query failed: '%s'", request.query[:100])
         raise HTTPException(status_code=500, detail=str(e))
 
 

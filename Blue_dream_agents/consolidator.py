@@ -52,17 +52,14 @@ async def consolidator_agent(
 
     # TODO : Create also a VectorDB here for semantic search. (Future task)
 
-    # Now here we will call the video agent for the video description of the events in the room and the audio agent for the audio transcript
+    # Run video description and audio transcription in parallel (independent tasks)
     video_agent = Video_Agent()
+    audio_agent = Audio_agent()
     loop = asyncio.get_running_loop()
 
-    video_details = await loop.run_in_executor(
-        None, video_agent.video_description, video_path
-    )
-
-    audio_agent = Audio_agent()
-    audio_transcript = await loop.run_in_executor(
-        None, audio_agent.transcribe_audio, audio_path
+    video_details, audio_transcript = await asyncio.gather(
+        loop.run_in_executor(None, video_agent.video_description, video_path),
+        loop.run_in_executor(None, audio_agent.transcribe_audio, audio_path),
     )
 
     # we will now create a JSON object which is going to be stored in the database

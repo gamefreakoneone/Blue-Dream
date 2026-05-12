@@ -7,10 +7,10 @@ import logging
 import os
 from typing import Any, Dict, List, Literal, Optional
 
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 
 try:
+    from .db_client import get_mongo_client, close_mongo_client
     from .gemini_spatial import highlight_object_with_gemini
     from .llm.model_registry import get_model_registry
     from .llm.prompt_context import (
@@ -21,6 +21,7 @@ try:
     from .memory_schema import MemoryEvent, ROOMS, memory_event_from_mongo
     from .timezone_utils import now_local
 except ImportError:
+    from db_client import get_mongo_client, close_mongo_client
     from gemini_spatial import highlight_object_with_gemini
     from llm.model_registry import get_model_registry
     from llm.prompt_context import (
@@ -85,22 +86,9 @@ class ObjectLastKnownResult(BaseModel):
     confidence: Literal["high", "medium", "low"] = "low"
 
 
-MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-_mongo_client: Optional[AsyncIOMotorClient] = None
-
-
-def get_mongo_client() -> AsyncIOMotorClient:
-    global _mongo_client
-    if _mongo_client is None:
-        _mongo_client = AsyncIOMotorClient(MONGO_URI)
-    return _mongo_client
-
-
 async def close_clients():
-    global _mongo_client
-    if _mongo_client:
-        _mongo_client.close()
-        _mongo_client = None
+    """Legacy convenience wrapper - delegates to shared db_client."""
+    await close_mongo_client()
 
 
 async def _get_latest_room_states() -> List[MemoryEvent]:
@@ -176,14 +164,17 @@ async def _check_image_worker(
                 "Decide whether the image visibly contains the target object or a "
                 "clear synonym. Treat the inventory only as synonym guidance, not "
                 "as proof. If found, describe where it is in one short grounded "
-                "sentence and provide the matched object string when a synonym or "
-                "specific variant is visible."
+                "sentence addressed to the patient using 'your' (e.g. 'Your keys are "
+                "on the kitchen counter'). Provide the matched object string when a "
+                "synonym or specific variant is visible."
             ),
             image_path=room.screenshot_path,
             output_model=ObjectVisionCheck,
             system_prompt=with_patient_cctv_context(
-                "You inspect room images for a lost-object assistant. Only mark found "
-                "true when the object is visibly present in the current image."
+                "You inspect room images for a lost-object assistant helping a "
+                "dementia patient. Only mark found true when the object is visibly "
+                "present in the current image. Write descriptions in second person "
+                "addressed to the patient (use 'your' not 'the')."
             ),
             model_id=registry.vision,
             fallback_model_id=registry.vision_fallback,
@@ -296,13 +287,17 @@ async def _analyze_last_known_location(
         output_model=ObjectLastKnownResult,
         system_prompt=with_patient_cctv_context(
             "You infer the last known location of a missing household item from "
-            "home-monitoring events. Prefer direct mentions in video_description. "
+            "home-monitoring events for a dementia patient. Write all summaries in "
+            "second person addressed directly to the patient (use 'you' and 'your', "
+            "not 'the person', 'the individual', or 'they'). "
+            "Prefer direct mentions in video_description. "
             "Use room_objects only as supporting evidence, never as sole proof. "
             "Use audio_transcript only when it directly supports the object's "
-            "location or handling. Never invent a current location. If the person "
-            "was carrying the object and then moved out of frame, mark "
+            "location or handling. Never invent a current location. If you were "
+            "carrying the object and then moved out of frame, mark "
             "status='carried_out_of_frame' and say it was last seen being carried "
-            "in that room. Mark found=false when there is no reliable grounded clue."
+            "by you in that room. Mark found=false when there is no reliable "
+            "grounded clue."
         ),
         model_id=registry.synthesis,
         structured_output_prompt=(
@@ -339,16 +334,36 @@ async def _highlight_object(
     grounding_text: Optional[str] = None,
     output_dir: str = "Storage/highlighted",
 ) -> Optional[str]:
-    output_dir = os.path.abspath(output_dir)
+    # Resolve output_dir relative to the project root (two levels up from this file)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if not os.path.isabs(output_dir):
+        output_dir = os.path.join(project_root, output_dir)
+    else:
+        output_dir = os.path.abspath(output_dir)
+
+    logger.info(
+        "Attempting Gemini highlight for '%s' (matched: '%s') in image: %s",
+        object_name,
+        matched_object or object_name,
+        image_path,
+    )
 
     try:
-        return await highlight_object_with_gemini(
+        result = await highlight_object_with_gemini(
             image_path=image_path,
             object_name=object_name,
             matched_object=matched_object,
             grounding_text=grounding_text,
             output_dir=output_dir,
         )
+        if result:
+            logger.info("Highlight generated successfully: %s", result)
+        else:
+            logger.warning(
+                "Highlight returned None for '%s' - Gemini may not have found a bounding box.",
+                object_name,
+            )
+        return result
     except Exception as exc:
         logger.warning("Highlight failed for %s: %s", object_name, exc)
         return None
@@ -356,7 +371,11 @@ async def _highlight_object(
 
 async def search_for_object(user_query: str) -> SearchResult:
     try:
-        room_states = await _get_latest_room_states()
+        # Run room state fetch and query intent parsing in parallel (independent)
+        room_states, parsed = await asyncio.gather(
+            _get_latest_room_states(),
+            _parse_query_intent(user_query),
+        )
         if not room_states:
             return SearchResult(
                 found=False,
@@ -365,7 +384,6 @@ async def search_for_object(user_query: str) -> SearchResult:
                 highlight_status="not_attempted",
             )
 
-        parsed = await _parse_query_intent(user_query)
         target_object = parsed.object_name or user_query
         target_room_id = parsed.room_id
 
@@ -394,6 +412,9 @@ async def search_for_object(user_query: str) -> SearchResult:
                 matched_object=best_match["matched_object"],
                 grounding_text=best_match["description"] or room.video_description,
             )
+            # If highlighting failed, fall back to the original screenshot so the
+            # user can at least see the room where the object was found.
+            image_path_to_return = highlight_path or room.screenshot_path
             return SearchResult(
                 found=True,
                 room_number=room.room_number,
@@ -405,7 +426,7 @@ async def search_for_object(user_query: str) -> SearchResult:
                     best_match["description"],
                     highlight_generated=bool(highlight_path),
                 ),
-                highlighted_image_path=highlight_path,
+                highlighted_image_path=image_path_to_return,
                 evidence_type=(
                     "current_visual_highlight"
                     if highlight_path

@@ -281,7 +281,18 @@ async def localize_object_with_gemini(
     grounding_text: Optional[str] = None,
 ) -> GeminiSpatialResult:
     if not image_path or not os.path.exists(image_path):
+        logger.warning(
+            "Gemini localization skipped: image_path is empty or does not exist: %s",
+            image_path,
+        )
         return GeminiSpatialResult(found=False, raw_text="")
+
+    logger.info(
+        "Gemini localization request for '%s' (matched: '%s') on image: %s",
+        object_name,
+        matched_object or object_name,
+        image_path,
+    )
 
     try:
         raw_text = await asyncio.to_thread(
@@ -297,7 +308,20 @@ async def localize_object_with_gemini(
         )
         return GeminiSpatialResult(found=False, raw_text="", error=str(exc))
 
-    return parse_gemini_spatial_response(raw_text)
+    result = parse_gemini_spatial_response(raw_text)
+    if result.found:
+        logger.info(
+            "Gemini localization succeeded for '%s': box=%s",
+            object_name,
+            result.bounding_box.box_2d if result.bounding_box else "None",
+        )
+    else:
+        logger.warning(
+            "Gemini localization returned no valid bounding box for '%s'. Raw response: %s",
+            object_name,
+            raw_text[:300],
+        )
+    return result
 
 
 async def render_highlighted_image(

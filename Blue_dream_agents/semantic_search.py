@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 
 try:
+    from .db_client import get_mongo_client, close_mongo_client
     from .llm.embedding_client import embed_text
     from .llm.model_registry import get_model_registry
     from .llm.prompt_context import (
@@ -31,6 +32,7 @@ try:
         upsert_event_embedding,
     )
 except ImportError:
+    from db_client import get_mongo_client, close_mongo_client
     from llm.embedding_client import embed_text
     from llm.model_registry import get_model_registry
     from llm.prompt_context import (
@@ -79,23 +81,15 @@ class SemanticSearchResult(BaseModel):
     matches: List[SemanticMatch] = Field(default_factory=list)
 
 
-_mongo_client: Optional[AsyncIOMotorClient] = None
 _sync_lock = asyncio.Lock()
 _index_bootstrapped = False
-
-
-def get_mongo_client() -> AsyncIOMotorClient:
-    global _mongo_client
-    if _mongo_client is None:
-        _mongo_client = AsyncIOMotorClient(get_provider_settings().mongodb_uri)
-    return _mongo_client
+_last_sync_time: float = 0.0
+_SYNC_TTL_SECONDS: float = 60.0  # Skip full index inspection if synced within this window
 
 
 async def close_clients():
-    global _mongo_client
-    if _mongo_client:
-        _mongo_client.close()
-        _mongo_client = None
+    """Legacy convenience wrapper - delegates to shared db_client."""
+    await close_mongo_client()
 
 
 async def _run_blocking(func, *args):
@@ -183,6 +177,16 @@ def _index_requires_reset(index_state: dict[str, Any]) -> bool:
 
 async def ensure_semantic_index_synced(force_rebuild: bool = False) -> str:
     global _index_bootstrapped
+    global _last_sync_time
+
+    # TTL short-circuit: skip full inspection if recently synced and not forced
+    if (
+        not force_rebuild
+        and _index_bootstrapped
+        and (time.time() - _last_sync_time) < _SYNC_TTL_SECONDS
+    ):
+        return "ready"
+
     async with _sync_lock:
         index_status = "ready"
         index_state = await _run_blocking(inspect_production_index)
@@ -215,14 +219,17 @@ async def ensure_semantic_index_synced(force_rebuild: bool = False) -> str:
                 )
                 indexed_any = await _index_all_mongo_events()
                 _index_bootstrapped = True
+                _last_sync_time = time.time()
                 if indexed_any:
                     return "synced" if index_status == "ready" else "recovered"
             _index_bootstrapped = True
+            _last_sync_time = time.time()
             return "ready" if index_status == "ready" else "recovered"
 
         indexed_any = await _index_all_mongo_events()
 
         _index_bootstrapped = True
+        _last_sync_time = time.time()
         if indexed_any:
             return "bootstrapped" if index_status == "ready" else "rebuilt"
         return "empty"
@@ -276,6 +283,89 @@ async def _summarize_matches(query: str, events: list[MemoryEvent]) -> str:
         model_id=registry.synthesis,
         max_tokens=500,
     )
+
+
+async def run_semantic_retrieval(query: str) -> SemanticSearchResult:
+    """Retrieve semantic matches WITHOUT synthesizing an answer text.
+
+    Use this from jeeves when the caller will judge and synthesize separately.
+    This saves one LLM call compared to run_semantic_query.
+    """
+    settings = get_provider_settings()
+    top_k = settings.semantic_search_top_k
+
+    try:
+        index_status = await ensure_semantic_index_synced()
+        query_embedding = await _run_blocking(
+            embed_text,
+            query,
+            "query",
+            get_embedding_dimension(),
+        )
+        raw_matches = await _run_blocking(query_similar_embeddings, query_embedding, top_k)
+        if not raw_matches:
+            return SemanticSearchResult(
+                success=False,
+                text="",
+                query=query,
+                match_count=0,
+                top_k=top_k,
+                index_status=index_status,
+                error_code="no_semantic_match",
+                matches=[],
+            )
+
+        matched_ids = [match["event_id"] for match in raw_matches]
+        matched_events = await _fetch_events_by_ids(matched_ids)
+        if not matched_events:
+            await _run_blocking(delete_event_ids, matched_ids)
+            return SemanticSearchResult(
+                success=False,
+                text="",
+                query=query,
+                match_count=0,
+                top_k=top_k,
+                index_status=index_status,
+                error_code="stale_vector_matches",
+                matches=[],
+            )
+
+        events_by_id = {event.event_id: event for event in matched_events}
+        stale_ids = [event_id for event_id in matched_ids if event_id not in events_by_id]
+        if stale_ids:
+            await _run_blocking(delete_event_ids, stale_ids)
+
+        ordered_events = [
+            events_by_id[event_id] for event_id in matched_ids if event_id in events_by_id
+        ]
+        raw_matches_by_id = {
+            raw_match["event_id"]: raw_match for raw_match in raw_matches
+        }
+        matches = [
+            _match_from_event(event, raw_matches_by_id[event.event_id]["distance"])
+            for event in ordered_events
+        ]
+        return SemanticSearchResult(
+            success=True,
+            text="",  # No summarization - caller will synthesize
+            query=query,
+            match_count=len(matches),
+            top_k=top_k,
+            index_status=index_status,
+            matches=matches,
+        )
+    except Exception as exc:
+        logger.exception("Semantic retrieval failed.")
+        return SemanticSearchResult(
+            success=False,
+            text=f"I'm sorry, I had trouble searching your memories: {exc}",
+            query=query,
+            match_count=0,
+            top_k=top_k,
+            index_status="error",
+            error_code="semantic_query_failed",
+            matches=[],
+        )
 
 
 async def run_semantic_query(query: str) -> SemanticSearchResult:

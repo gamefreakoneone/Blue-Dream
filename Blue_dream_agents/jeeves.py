@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 try:
     from .llm.model_registry import get_model_registry
@@ -15,7 +18,7 @@ try:
     )
     from .llm.strands_runtime import invoke_structured, invoke_text
     from .object_detector import run_object_query
-    from .semantic_search import SemanticSearchResult, run_semantic_query
+    from .semantic_search import SemanticSearchResult, run_semantic_query, run_semantic_retrieval
     from .time_agent import TimeWindowContext, get_time_window_context, run_time_query
 except ImportError:
     from llm.model_registry import get_model_registry
@@ -26,7 +29,7 @@ except ImportError:
     )
     from llm.strands_runtime import invoke_structured, invoke_text
     from object_detector import run_object_query
-    from semantic_search import SemanticSearchResult, run_semantic_query
+    from semantic_search import SemanticSearchResult, run_semantic_query, run_semantic_retrieval
     from time_agent import TimeWindowContext, get_time_window_context, run_time_query
 
 
@@ -283,8 +286,22 @@ async def _synthesize_semantic_answer(
 
 
 async def _handle_semantic_query(query: str) -> JeevesResponse:
-    semantic_result = await run_semantic_query(query)
+    # Use run_semantic_retrieval to skip the internal summarization LLM call;
+    # we will judge and synthesize our own answer below.
+    semantic_result = await run_semantic_retrieval(query)
+    logger.info(
+        "[SEMANTIC] Retrieval: success=%s, match_count=%d, index_status=%s",
+        semantic_result.success,
+        semantic_result.match_count,
+        semantic_result.index_status,
+    )
     decision = await _judge_semantic_retrieval(query, semantic_result)
+    logger.info(
+        "[SEMANTIC] Judge decision: %s, anchor_event_id=%s, reason='%s'",
+        decision.decision,
+        decision.anchor_event_id,
+        decision.reason,
+    )
     response_data: dict[str, Any] = {
         "route_intent": "semantic",
         "semantic": semantic_result.model_dump(mode="json"),
@@ -368,8 +385,24 @@ async def _handle_general_query(query: str) -> JeevesResponse:
 async def run_single_query(query: str) -> JeevesResponse:
     try:
         route = await _route_query(query)
+        logger.info(
+            "[ROUTE] Query: '%s' -> intent=%s, reason='%s'",
+            query[:80],
+            route.intent,
+            route.reason,
+        )
+
         if route.intent == "object":
+            logger.info("[TOOL CALL] Object search for: '%s'", query)
             result = await run_object_query(query)
+            logger.info(
+                "[TOOL RESULT] Object search: found=%s, evidence_type=%s, "
+                "highlight_status=%s, image_path=%s",
+                result.found,
+                result.evidence_type,
+                result.highlight_status,
+                result.highlighted_image_path,
+            )
             response_text = (result.description or "").strip() or "I couldn't find that object."
             return JeevesResponse(
                 response_type="search_result",
@@ -383,7 +416,13 @@ async def run_single_query(query: str) -> JeevesResponse:
             )
 
         if route.intent == "time":
+            logger.info("[TOOL CALL] Time-based query: '%s'", query)
             result = await run_time_query(query)
+            logger.info(
+                "[TOOL RESULT] Time query: response_type=%s, text_length=%d",
+                result.response_type,
+                len(result.text),
+            )
             return JeevesResponse(
                 response_type="activity",
                 text=result.text,
@@ -396,12 +435,19 @@ async def run_single_query(query: str) -> JeevesResponse:
             )
 
         if route.intent == "semantic":
+            logger.info("[TOOL CALL] Semantic memory search: '%s'", query)
             response = await _handle_semantic_query(query)
+            logger.info(
+                "[TOOL RESULT] Semantic query: response_type=%s, text_length=%d",
+                response.response_type,
+                len(response.text),
+            )
             if response.data is None:
                 response.data = {}
             response.data["route_reason"] = route.reason
             return response
 
+        logger.info("[TOOL CALL] General query: '%s'", query)
         response = await _handle_general_query(query)
         response.data = {
             "route_intent": route.intent,
@@ -409,6 +455,7 @@ async def run_single_query(query: str) -> JeevesResponse:
         }
         return response
     except Exception as exc:
+        logger.exception("[ERROR] Query failed: '%s'", query)
         return JeevesResponse(
             response_type="general",
             text=f"I encountered an error: {exc}",

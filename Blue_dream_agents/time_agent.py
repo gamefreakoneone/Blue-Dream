@@ -3,15 +3,14 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
-import os
 import re
 from datetime import timedelta
 from typing import Any, Dict, List, Literal, Optional
 
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 
 try:
+    from .db_client import get_mongo_client, close_mongo_client
     from .llm.model_registry import get_model_registry
     from .llm.prompt_context import (
         with_monitoring_evidence_context,
@@ -28,6 +27,7 @@ try:
     )
     from .timezone_utils import LOCAL_TZ, now_local
 except ImportError:
+    from db_client import get_mongo_client, close_mongo_client
     from llm.model_registry import get_model_registry
     from llm.prompt_context import (
         with_monitoring_evidence_context,
@@ -118,22 +118,9 @@ _SPEECH_RECALL_TERMS = (
 )
 
 
-MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-_mongo_client: Optional[AsyncIOMotorClient] = None
-
-
-def get_mongo_client() -> AsyncIOMotorClient:
-    global _mongo_client
-    if _mongo_client is None:
-        _mongo_client = AsyncIOMotorClient(MONGO_URI)
-    return _mongo_client
-
-
 async def close_clients():
-    global _mongo_client
-    if _mongo_client:
-        _mongo_client.close()
-        _mongo_client = None
+    """Legacy convenience wrapper - delegates to shared db_client."""
+    await close_mongo_client()
 
 
 def _parse_room_name(room_name: str) -> Optional[int]:

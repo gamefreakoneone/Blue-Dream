@@ -113,48 +113,53 @@ class VideoProcessingQueue:
         print(f"Added video task to queue: {os.path.basename(video_path)}")
 
     def _consumer_loop(self):
-        """Consumer loop that processes tasks from the queue."""
-        while True:
-            task = self._queue.get()
+        """Consumer loop that processes tasks from the queue using a persistent event loop."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            while True:
+                task = self._queue.get()
 
-            # None is the signal to stop
-            if task is None:
-                self._queue.task_done()
-                break
+                # None is the signal to stop
+                if task is None:
+                    self._queue.task_done()
+                    break
 
-            # Show progress
-            remaining = self._queue.qsize()
-            with self._lock:
-                current_num = self._total_processed + self._total_errors + 1
+                # Show progress
+                remaining = self._queue.qsize()
+                with self._lock:
+                    current_num = self._total_processed + self._total_errors + 1
 
-            print(f"\nProcessing video {current_num} ({remaining} more in queue)...")
-            print(f"  Video: {os.path.basename(task.video_path)}")
+                print(f"\nProcessing video {current_num} ({remaining} more in queue)...")
+                print(f"  Video: {os.path.basename(task.video_path)}")
 
-            try:
-                # Run the async consolidator_agent in this thread
-                asyncio.run(
-                    consolidator_agent(
-                        video_path=task.video_path,
-                        audio_path=task.audio_path,
-                        screenshot_path=task.screenshot_path,
-                        room_number=task.room_number,
-                        timestamp=task.timestamp,
+                try:
+                    # Run the async consolidator_agent in the persistent event loop
+                    loop.run_until_complete(
+                        consolidator_agent(
+                            video_path=task.video_path,
+                            audio_path=task.audio_path,
+                            screenshot_path=task.screenshot_path,
+                            room_number=task.room_number,
+                            timestamp=task.timestamp,
+                        )
                     )
-                )
 
-                with self._lock:
-                    self._total_processed += 1
-                print(
-                    f"  ✓ Successfully processed: {os.path.basename(task.video_path)}"
-                )
+                    with self._lock:
+                        self._total_processed += 1
+                    print(
+                        f"  Successfully processed: {os.path.basename(task.video_path)}"
+                    )
 
-            except Exception as e:
-                with self._lock:
-                    self._total_errors += 1
-                print(f"  ✗ Error processing {os.path.basename(task.video_path)}: {e}")
+                except Exception as e:
+                    with self._lock:
+                        self._total_errors += 1
+                    print(f"  Error processing {os.path.basename(task.video_path)}: {e}")
 
-            finally:
-                self._queue.task_done()
+                finally:
+                    self._queue.task_done()
+        finally:
+            loop.close()
 
     @property
     def pending_count(self) -> int:

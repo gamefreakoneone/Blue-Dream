@@ -10,7 +10,8 @@ PATIENT_CCTV_WORLD_MODEL = (
     "subject as the patient you are assisting. If the evidence explicitly names or "
     "clearly identifies another person, preserve that identity and do not collapse them "
     "into the patient. Stay grounded in the supplied evidence and never invent identity "
-    "details."
+    "details. When producing any text that will be shown to the patient, always address "
+    "them directly as 'you' and refer to their belongings as 'your'."
 )
 
 PATIENT_FACING_ANSWER_STYLE = (

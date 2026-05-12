@@ -18,6 +18,33 @@ except ImportError:
 T = TypeVar("T", bound=BaseModel)
 logger = logging.getLogger(__name__)
 
+# Persistent HTTP client for connection pooling across Ollama calls
+_http_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Return a persistent httpx client for Ollama, creating one if needed."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        settings = get_provider_settings()
+        _http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(settings.request_timeout_seconds),
+            limits=httpx.Limits(
+                max_connections=10,
+                max_keepalive_connections=5,
+                keepalive_expiry=30.0,
+            ),
+        )
+    return _http_client
+
+
+async def close_http_client() -> None:
+    """Close the persistent HTTP client (call on shutdown)."""
+    global _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        await _http_client.aclose()
+    _http_client = None
+
 
 def _prompt_to_text(prompt: Any) -> str:
     if isinstance(prompt, str):
@@ -45,11 +72,10 @@ def _chat_options(
 async def _post_chat(payload: dict[str, Any]) -> dict[str, Any]:
     settings = get_provider_settings()
     url = f"{settings.ollama_base_url.rstrip('/')}/api/chat"
-    timeout = httpx.Timeout(settings.request_timeout_seconds)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(url, json=payload)
-        response.raise_for_status()
-        return response.json()
+    client = _get_http_client()
+    response = await client.post(url, json=payload)
+    response.raise_for_status()
+    return response.json()
 
 
 def _image_to_base64(image_path: str) -> str:
