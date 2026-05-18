@@ -7,10 +7,15 @@ import {
   StyleSheet,
   Image,
   ActivityIndicator,
+  Linking,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { COLORS } from '../../constants/theme';
 import { getAlert, ackAlert, rewriteImagePath } from '../../lib/api';
+
+// Demo coordinates for USC (configured as "home")
+const HOME_LAT = 34.02489180064899;
+const HOME_LNG = -118.2841318193814;
 
 export default function AlertDetailScreen() {
   const { id } = useLocalSearchParams();
@@ -50,6 +55,23 @@ export default function AlertDetailScreen() {
     }
   };
 
+  const handleTakeMeHome = async () => {
+    if (!id) return;
+    setAckLoading(true);
+    try {
+      const updated = await ackAlert(id, 'returning');
+      setAlert(updated);
+      const url = `https://www.google.com/maps/dir/?api=1&destination=${HOME_LAT},${HOME_LNG}`;
+      Linking.openURL(url).catch((e) => {
+        console.error('Failed to open maps:', e);
+      });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setAckLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <View style={styles.center}>
@@ -76,6 +98,11 @@ export default function AlertDetailScreen() {
 
   const imageUri = rewriteImagePath(alert.image_path);
   const isClosed = alert.status === 'acknowledged' || alert.status === 'closed';
+  const isGeofence =
+    alert.alert_type === 'geofence_exit' ||
+    alert.hazard_type === 'geofence_exit' ||
+    alert.alert_type === 'geofence_enter' ||
+    alert.hazard_type === 'geofence_enter';
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -113,7 +140,7 @@ export default function AlertDetailScreen() {
         <Image source={{ uri: imageUri }} style={styles.image} resizeMode="cover" />
       )}
 
-      {!isClosed && (
+      {!isClosed && !isGeofence && (
         <View style={styles.actions}>
           <TouchableOpacity
             style={[styles.btn, styles.btnOk]}
@@ -138,6 +165,27 @@ export default function AlertDetailScreen() {
             activeOpacity={0.8}
           >
             <Text style={[styles.btnText, styles.btnDismissText]}>Dismiss</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {!isClosed && isGeofence && (
+        <View style={styles.actions}>
+          <TouchableOpacity
+            style={[styles.btn, styles.btnOk]}
+            onPress={() => handleAck('ok')}
+            disabled={ackLoading}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.btnText}>I am OK</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.btn, styles.btnReturning]}
+            onPress={handleTakeMeHome}
+            disabled={ackLoading}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.btnText}>Take me home</Text>
           </TouchableOpacity>
         </View>
       )}

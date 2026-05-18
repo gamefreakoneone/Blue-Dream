@@ -27,6 +27,43 @@
             </div>
         </header>
 
+        <section class="emergency-panel" aria-labelledby="emergency-title">
+            <div class="emergency-header">
+                <div>
+                    <p class="eyebrow">Web emergency workflow demo</p>
+                    <h2 id="emergency-title">Safe-zone alert</h2>
+                </div>
+                <button type="button" id="simulate-exit-btn">
+                    <i class="fa-solid fa-location-arrow"></i>
+                    <span>Simulate safe-zone exit</span>
+                </button>
+            </div>
+
+            <div class="emergency-grid">
+                <div class="emergency-block">
+                    <div class="block-label">Home geofence</div>
+                    <div id="geofence-status" class="status-card muted">Loading geofence...</div>
+                </div>
+
+                <div class="emergency-block">
+                    <div class="block-label">Open patient alerts</div>
+                    <div id="alert-list" class="alert-list">Loading alerts...</div>
+                </div>
+            </div>
+
+            <div id="alert-detail" class="alert-detail empty">
+                <div class="empty-state">
+                    <i class="fa-solid fa-shield-heart"></i>
+                    <div>
+                        <strong>No alert selected</strong>
+                        <p>Create a safe-zone exit alert to demonstrate the emergency flow.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div id="emergency-error" class="emergency-error" role="status" aria-live="polite"></div>
+        </section>
+
         <main id="chat-container">
             <div class="message system">
                 <div class="bubble">

@@ -20,7 +20,8 @@
   - update `AGENTS.md`
 
 ## Target Overhaul Direction
-- The patient web app remains the primary surface.
+- The patient web app remains a primary surface.
+- The Expo React Native patient mobile app under `Mobile/` is now an active second patient surface, supporting chat, alert list/detail, geofence guidance, and push-notification scaffolding.
 - MongoDB remains the source of truth for memory events.
 - ChromaDB is now the active vector index for semantic memory search.
 - Gemma 4 E2B through local Ollama is now the active text and current-image reasoning runtime for:
@@ -48,12 +49,21 @@
 ```powershell
 uvicorn Blue_dream_agents.api:app --reload
 ```
+- Start backend API accessible from LAN/mobile (bind all interfaces):
+```powershell
+uvicorn Blue_dream_agents.api:app --reload --host 0.0.0.0
+```
 - Start capture pipeline:
 ```powershell
 python Capture/camera_feed.py
 ```
 - Access UI:
   - `http://localhost:8000`
+- Start mobile app (Metro bundler):
+```powershell
+cd Mobile
+npx expo start
+```
 
 ## Critical Interfaces (Do Not Break)
 
@@ -208,6 +218,20 @@ POST /geofence/events
 - Frontend:
   - `UI/index.html`, `UI/script.js`, `UI/styles.css`
   - `UI/script.js` posts to `/query` and renders optional images.
+- Mobile patient app (`Mobile/`):
+  - Expo React Native with Expo Router (file-based routing).
+  - `Mobile/app/index.js` — Chat screen mirroring web UI behavior: `POST /query`, `POST /conversation/reset`, stable `session_id`, image rendering.
+  - `Mobile/app/alerts/index.js` — Alert list screen (`GET /alerts/patient?status=open`).
+  - `Mobile/app/alerts/[id].js` — Alert detail + acknowledgement actions (`GET /alerts/{id}`, `POST /alerts/{id}/ack`).
+  - `Mobile/app/geofence.js` — Geofence screen with fallback home coordinates and "Guide me home" Google Maps navigation.
+  - `Mobile/lib/api.js` — API client with image-path rewriting (`/Storage/` and `/Capture/` to backend URLs).
+  - `Mobile/lib/session.js` — AsyncStorage-backed stable session ID.
+  - `Mobile/lib/device.js` — AsyncStorage-backed stable device ID.
+  - `Mobile/lib/notifications.js` — Android notification channel setup, permission request, push token acquisition, `POST /devices/register`, and local test-notification helper.
+  - `Mobile/app/_layout.js` — Root Stack layout with Memoria header, New Chat button, Alerts button, notification-init effect, and deep-link routing (`memoria://alerts/{alert_id}`).
+  - Deep-link scheme `memoria://` configured in `Mobile/app.json`.
+  - Push provider currently set to `"expo"` for Expo Go prototype mode; `"fcm"` can be swapped in later for EAS dev build + Firebase.
+  - Dev-only test-notification button on geofence screen (hidden in production builds via `__DEV__`).
 
 ## Source-of-Truth Files vs Legacy/Archive
 
@@ -243,6 +267,16 @@ POST /geofence/events
 - `UI/index.html`
 - `UI/script.js`
 - `UI/styles.css`
+- `Mobile/app/_layout.js`
+- `Mobile/app/index.js`
+- `Mobile/app/alerts/index.js`
+- `Mobile/app/alerts/[id].js`
+- `Mobile/app/geofence.js`
+- `Mobile/lib/api.js`
+- `Mobile/lib/session.js`
+- `Mobile/lib/device.js`
+- `Mobile/lib/notifications.js`
+- `Mobile/constants/theme.js`
 
 ### Planning Source-of-Truth
 - `PLANS.md` is the source of truth for overhaul sequencing and feature status.
@@ -279,8 +313,11 @@ POST /geofence/events
   - Optional for local semantic embeddings: `EMBEDDING_PROVIDER`, `LOCAL_EMBEDDING_MODEL`, `CHROMA_EMBEDDING_DIMENSION`
   - Optional for safety/alert demo: `SAFETY_AGENT_ENABLED`, `SAFETY_ALERT_MIN_SEVERITY`
   - Optional for Firebase push: `FIREBASE_PROJECT_ID`, `FIREBASE_CREDENTIALS_PATH`, `FIREBASE_ANDROID_PACKAGE`
-  - Optional for geofence demo: `PATIENT_HOME_LAT`, `PATIENT_HOME_LNG`, `PATIENT_GEOFENCE_RADIUS_METERS`
-  - Required only for legacy Nova embeddings when `EMBEDDING_PROVIDER=bedrock`: `AWS_BEARER_TOKEN_BEDROCK` or standard AWS credentials/profile
+- Optional for geofence demo: `PATIENT_HOME_LAT`, `PATIENT_HOME_LNG`, `PATIENT_GEOFENCE_RADIUS_METERS`
+- Mobile-only:
+  - `EXPO_PUBLIC_API_BASE_URL` in `Mobile/.env` (e.g., `http://192.168.1.112:8000`)
+  - No other mobile keys required for Expo Go chat/alert/geofence development
+- Required only for legacy Nova embeddings when `EMBEDDING_PROVIDER=bedrock`: `AWS_BEARER_TOKEN_BEDROCK` or standard AWS credentials/profile
 - Optional Nova overrides:
   - `LOCAL_LLM_PROVIDER` (defaults to `ollama`)
   - `OLLAMA_BASE_URL` (defaults to `http://localhost:11434`)
@@ -384,6 +421,13 @@ POST /geofence/events
 - The UI is branded as "Memoria" (page title: "Memoria - Personal Assistant", header: "Memoria"); this is the patient-facing product name.
 - `Capture/camera_feed.py` maps camera index 1 to room 0 (Bedroom) and camera index 2 to room 1 (Living Room); resolution is 1920x1080 at 20 FPS via DirectShow.
 - Fall detection uses a 3.5-second stability window before triggering an alert; the YOLO model uses a 0.50 confidence threshold.
+- The UI is branded as "Memoria" (page title: "Memoria - Personal Assistant", header: "Memoria"); this is the patient-facing product name.
+- `Mobile/.env` uses `EXPO_PUBLIC_API_BASE_URL` for the backend LAN IP. Metro reads env at startup; changes require a Metro restart.
+- Expo Go on Android does not support remote push notifications for SDK 54+. Local notifications and deep-link routing work for testing, but real FCM delivery requires an EAS development build.
+- Mobile push provider is `"expo"` in prototype mode and should be switched to `"fcm"` when building with EAS + Firebase.
+- Mobile image path rewriting in `lib/api.js` mirrors the web UI logic: `/Storage/` and `/Capture/` are prefixed with `EXPO_PUBLIC_API_BASE_URL`.
+- Mobile geofence screen uses hardcoded fallback coordinates (`34.034992564747604, -118.28252676933066`) when the backend geofence is not configured.
+- Dev-only test-notification button on the geofence screen is gated by `__DEV__` and should be removed before the final demo.
 
 ## Safe Edit Rules (Project-Specific)
 - If changing response models or API output fields, update both:

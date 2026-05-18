@@ -81,7 +81,7 @@
   - ChromaDB semantic search
   - object search and image highlighting
   - FastAPI-served patient web UI
-  - initialized Android app under `Mobile/`
+  - initialized and functional Expo React Native patient app under `Mobile/`
 - `AGENTS.md` still documents the current implementation baseline, including Nova/Bedrock code paths.
 
 ### What We Will Do
@@ -389,50 +389,44 @@
 - Confirm endpoints return JSON without exposing MongoDB `ObjectId` values.
 
 ## Phase 5: Mobile Patient App
-**Status:** Planned
+**Status:** In Progress
 
 ### Current Situation
-- `Mobile/` is effectively empty in the current checkout, despite earlier roadmap wording about a Kotlin Compose skeleton.
-- The main patient surface is still the FastAPI-served web UI.
-- The mobile app does not yet provide chat, alert responses, geofence behavior, or Maps navigation.
+- `Mobile/` now contains a functional Expo React Native (SDK 54) patient app using Expo Router.
+- The app provides chat, alert list/detail, geofence guidance, and push-notification scaffolding.
+- Chat successfully calls the backend `POST /query` over LAN Wi-Fi with a stable `session_id`.
+- Object-localization images from `/storage/` and `/capture/` render correctly after path rewriting.
+- Alert list and detail screens consume the Phase 4 mobile alert API contract.
+- The geofence screen always shows a "Guide me home" button, falling back to hardcoded coordinates when the backend geofence is not configured.
+- Push notification setup creates an Android `urgent_alerts` channel, requests permission, acquires an Expo push token on physical devices, and calls `POST /devices/register` with `push_provider: "expo"`.
+- Deep-link scheme `memoria://` is configured; notification taps and cold-start deep links route to `/alerts/{alert_id}`.
+- A dev-only test-notification helper (gated by `__DEV__`) schedules a local notification with `url: "memoria://alerts/test-id"` for quick routing verification.
+- Expo Go on Android SDK 54 does not support remote push delivery; real backend-triggered emergency push requires an EAS development build + Firebase FCM.
 
 ### What We Will Do
-- Build a text-first Expo React Native Android patient companion.
-- Add backend configuration for local development API URL.
-- Add patient chat against `POST /query`.
-- Mirror the current `UI/` chat behavior:
-  - stable per-session `session_id`
-  - New Chat action through `POST /conversation/reset`
-  - render `text`
-  - render optional `image_path` for object localization
-  - rewrite Windows/local `/Storage/` and `/Capture/` image paths to backend `/storage/` and `/capture/` URLs
-- Add a basic alerts view for patient-actionable alerts.
-- Add push notification registration against `POST /devices/register`.
-- Open alert details from notification deep links such as `memoria://alerts/{alert_id}`.
-- Add simple patient response actions:
-  - `I'm OK`
-  - `Guide me home`
-- Use Android/Google Maps intents to launch navigation home.
-- Keep the app simple for hackathon reliability.
-- Defer:
-  - voice input/output
-  - multimodal mobile input/output
-  - Uber booking
-  - autonomous third-party app control
-  - full on-device memory retrieval
+- Complete any remaining mobile polish needed for the hackathon demo.
+- Keep the chat contract stable (`POST /query`, `POST /conversation/reset`, `JeevesResponse`).
+- Keep alert list/detail/ack contracts stable.
+- Keep geofence fallback and "Guide me home" behavior stable.
+- Switch `push_provider` from `"expo"` to `"fcm"` and configure Firebase when moving from Expo Go to an EAS development build.
+- Remove the `__DEV__` test-notification section before the final demo.
 
 ### Moving Forward
-- After Phase 5, the patient can use the mobile app for core text recall and basic safety interactions.
-- This becomes the preferred patient-facing demo surface if stable.
+- After Phase 5 is fully validated on a physical Android device, the mobile app becomes the preferred patient-facing demo surface.
+- Phase 6 (Caretaker Dashboard) can proceed independently.
 
 ### Validation
-- Build the Android app.
-- Confirm text chat can call the backend `/query`.
-- Confirm object localization images render from `/storage` or `/capture` URLs.
-- Confirm a patient-action alert can be displayed.
-- Confirm FCM registration can call `/devices/register`.
-- Confirm a notification tap opens the alert detail screen.
-- Confirm `Guide me home` launches Google Maps navigation with configured home coordinates.
+- [x] Build the Android app (Expo React Native + Expo Router).
+- [x] Confirm text chat can call the backend `/query` over LAN.
+- [x] Confirm optional `session_id` and `POST /conversation/reset` work for New Chat.
+- [x] Confirm object localization images render from `/storage` or `/capture` URLs.
+- [x] Confirm alert list (`GET /alerts/patient`) displays correctly.
+- [x] Confirm alert detail shows title, body, severity, room, image, and acknowledgement buttons.
+- [x] Confirm acknowledgement actions update alert status.
+- [ ] Confirm `POST /devices/register` succeeds on a physical Android device with a valid Expo push token.
+- [ ] Confirm a local notification tap opens the alert detail screen via deep link.
+- [x] Confirm `Guide me home` launches Google Maps navigation (tested on device/emulator via `Linking.openURL`).
+- [ ] Run a full end-to-end smoke on the physical demo phone (chat + alert + geofence + notification tap).
 
 ## Phase 6: Caretaker Dashboard
 **Status:** Planned
@@ -558,8 +552,9 @@
 
 ## Notes For Fresh Context Windows
 - Start with the first phase not marked `Validated` or `Committed`.
-- Phase 3 is the next planned phase after validated local semantic retrieval.
-- Do not start with mobile, dashboard, alert delivery, or local Gemma vision before the Gemma safety agent is stable.
+- Phase 3 and Phase 4 (Gemma Safety Agent + Alert Delivery) are the next planned backend phases.
+- Phase 5 (Mobile Patient App) is now code-complete but requires final on-device validation.
+- Do not start with dashboard, caretaker UI, or local Gemma vision before the safety agent and alert delivery are stable.
 - Keep Gemini for full-video perception until local Gemma frame sampling is proven.
 - Keep Gemini for spatial localization/highlighting; Gemma is currently used for object-presence checks, not precise object boxes.
 - Fall alerts go to caretaker or emergency contact.

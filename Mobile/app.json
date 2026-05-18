@@ -17,6 +17,8 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.amogh.memoria",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"

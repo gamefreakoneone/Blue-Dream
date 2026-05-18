@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -8,17 +8,20 @@ import {
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { COLORS } from '../constants/theme';
-import { getGeofence } from '../lib/api';
-import { sendTestNotification } from '../lib/notifications';
+import { getGeofence, recordGeofenceEvent } from '../lib/api';
+import { getOrCreateDeviceId } from '../lib/device';
 
-const FALLBACK_LAT = 34.034992564747604;
-const FALLBACK_LNG = -118.28252676933066;
+const FALLBACK_LAT = 34.02489180064899;
+const FALLBACK_LNG = -118.2841318193814;
 
 export default function GeofenceScreen() {
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [arming, setArming] = useState(false);
+  const countdownRef = useRef(null);
 
   useEffect(() => {
     let mounted = true;
@@ -37,6 +40,15 @@ export default function GeofenceScreen() {
     };
   }, []);
 
+  // Clean up any pending countdown on unmount
+  useEffect(() => {
+    return () => {
+      if (countdownRef.current) {
+        clearTimeout(countdownRef.current);
+      }
+    };
+  }, []);
+
   const getHomeCoords = () => {
     const lat = config?.home_lat;
     const lng = config?.home_lng;
@@ -46,13 +58,65 @@ export default function GeofenceScreen() {
     return { lat: FALLBACK_LAT, lng: FALLBACK_LNG, source: 'fallback' };
   };
 
-  const openMapsNavigation = () => {
-    const { lat, lng } = getHomeCoords();
+  const openMapsNavigation = (lat, lng) => {
     if (typeof lat !== 'number' || typeof lng !== 'number') return;
     const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
     Linking.openURL(url).catch((e) => {
       console.error('Failed to open maps:', e);
     });
+  };
+
+  const handleGuideMeHome = () => {
+    const { lat, lng } = getHomeCoords();
+    openMapsNavigation(lat, lng);
+  };
+
+  const handleLongPress = () => {
+    // Start invisible countdown: create backend alert + schedule notification after delay
+    setArming(true);
+    countdownRef.current = setTimeout(() => {
+      triggerGeofenceExitDemo();
+    }, 1200); // 1.2s to allow deliberate long-press but fast enough
+  };
+
+  const handlePressOut = () => {
+    if (countdownRef.current) {
+      clearTimeout(countdownRef.current);
+      countdownRef.current = null;
+    }
+    setArming(false);
+  };
+
+  const triggerGeofenceExitDemo = async () => {
+    try {
+      const deviceId = await getOrCreateDeviceId();
+      // Report a location slightly offset from USC so it appears as an exit
+      const alert = await recordGeofenceEvent({
+        event_type: 'exit',
+        latitude: 34.0200,
+        longitude: -118.2900,
+        device_id: deviceId,
+      });
+
+      // Schedule local notification 8 seconds later so the user can lock the phone
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: alert.title || 'Memoria location check',
+          body: alert.body || 'I noticed you are far from home. Is everything ok?',
+          data: {
+            url: `memoria://alerts/${alert.alert_id}`,
+            alert_id: alert.alert_id,
+          },
+        },
+        trigger: { seconds: 8 },
+      });
+
+      console.log('Geofence demo armed. Notification will fire in ~8 seconds.');
+    } catch (e) {
+      console.error('Geofence demo trigger failed:', e.message);
+    } finally {
+      setArming(false);
+    }
   };
 
   const { lat, lng, source } = getHomeCoords();
@@ -85,29 +149,15 @@ export default function GeofenceScreen() {
           </Text>
 
           <TouchableOpacity
-            style={styles.btn}
-            onPress={openMapsNavigation}
+            style={[styles.btn, arming && styles.btnArming]}
+            onPress={handleGuideMeHome}
+            onLongPress={handleLongPress}
+            onPressOut={handlePressOut}
+            delayLongPress={1200}
             activeOpacity={0.8}
           >
             <Text style={styles.btnText}>Guide me home</Text>
           </TouchableOpacity>
-
-          {/* TODO: remove this dev/test section before demo */}
-          {__DEV__ && (
-            <View style={styles.devSection}>
-              <Text style={styles.devLabel}>Dev / Test</Text>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnDev]}
-                onPress={sendTestNotification}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.btnDevText}>Send test notification</Text>
-              </TouchableOpacity>
-              <Text style={styles.devHint}>
-                Tap the test notification to verify deep-link routing to /alerts/test-id
-              </Text>
-            </View>
-          )}
         </>
       )}
     </ScrollView>
@@ -160,40 +210,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     marginBottom: 24,
   },
+  btnArming: {
+    backgroundColor: '#059669',
+  },
   btnText: {
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
-  },
-  devSection: {
-    width: '100%',
-    marginTop: 20,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-  },
-  devLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#94a3b8',
-    textTransform: 'uppercase',
-    marginBottom: 10,
-  },
-  btnDev: {
-    backgroundColor: '#64748b',
-    marginBottom: 8,
-  },
-  btnDevText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  devHint: {
-    fontSize: 12,
-    color: '#94a3b8',
-    textAlign: 'center',
   },
 });

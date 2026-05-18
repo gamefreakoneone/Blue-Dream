@@ -4,6 +4,8 @@ import { Platform } from 'react-native';
 import { getOrCreateDeviceId } from './device';
 import { registerDevice } from './api';
 
+const USE_FCM = false; // TODO: set to true when testing an EAS development build with Firebase
+
 /**
  * Note: Expo Go notification work is local-only for development testing.
  * Real backend-triggered emergency push requires either:
@@ -40,7 +42,16 @@ export async function setupNotifications() {
       return;
     }
 
-    const tokenData = await Notifications.getExpoPushTokenAsync();
+    let tokenData;
+    let provider;
+    if (USE_FCM) {
+      tokenData = await Notifications.getDevicePushTokenAsync();
+      provider = 'fcm';
+    } else {
+      tokenData = await Notifications.getExpoPushTokenAsync();
+      provider = 'expo';
+    }
+
     const pushToken = tokenData?.data;
 
     if (!pushToken) {
@@ -49,7 +60,6 @@ export async function setupNotifications() {
     }
 
     const deviceId = await getOrCreateDeviceId();
-    const provider = 'expo'; // TODO: switch to 'fcm' when using EAS development build + Firebase
 
     await registerDevice({
       device_id: deviceId,
@@ -62,6 +72,25 @@ export async function setupNotifications() {
     console.log('Device registered for push notifications:', pushToken);
   } catch (e) {
     console.warn('Notification setup failed:', e.message);
+  }
+}
+
+export async function scheduleGeofenceNotification({ alert_id, title, body, delaySeconds = 8 } = {}) {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: title || 'Memoria location check',
+        body: body || 'I noticed you are far from home. Is everything ok?',
+        data: {
+          url: `memoria://alerts/${alert_id}`,
+          alert_id,
+        },
+      },
+      trigger: { seconds: Math.max(1, Math.floor(delaySeconds)) },
+    });
+    console.log('Geofence notification scheduled for alert:', alert_id);
+  } catch (e) {
+    console.error('Failed to schedule geofence notification:', e);
   }
 }
 
