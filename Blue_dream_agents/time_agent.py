@@ -25,6 +25,7 @@ try:
         memory_event_from_mongo,
         normalize_timestamp,
     )
+    from .prompt_budget import compact_json_records, truncate_text
     from .timezone_utils import LOCAL_TZ, now_local
 except ImportError:
     from db_client import get_mongo_client, close_mongo_client
@@ -42,6 +43,7 @@ except ImportError:
         memory_event_from_mongo,
         normalize_timestamp,
     )
+    from prompt_budget import compact_json_records, truncate_text
     from timezone_utils import LOCAL_TZ, now_local
 
 
@@ -116,6 +118,9 @@ _SPEECH_RECALL_TERMS = (
     "conversation",
     "transcript",
 )
+SUMMARY_EVENT_BUDGET_CHARS = 18000
+TRANSCRIPT_PROMPT_BUDGET_CHARS = 18000
+ACTIVITY_PROMPT_BUDGET_CHARS = 18000
 
 
 async def close_clients():
@@ -283,10 +288,14 @@ async def _summarize_with_llm(
             {
                 "time": event.timestamp.strftime("%I:%M %p"),
                 "room": event.room_name,
-                "activity": event.video_description[:2000],
-                "speech": event.audio_transcript[:2000],
+                "activity": truncate_text(event.video_description, 900),
+                "speech": truncate_text(event.audio_transcript, 700),
             }
         )
+    context_data = compact_json_records(
+        context_data,
+        max_chars=SUMMARY_EVENT_BUDGET_CHARS,
+    )
 
     registry = get_model_registry()
     prompt = with_monitoring_evidence_context(
@@ -494,9 +503,17 @@ async def get_recent_transcripts(
 
         transcripts = [
             f"[{event.timestamp.strftime('%I:%M %p')} - {event.room_name}] "
-            f"{event.audio_transcript}"
+            f"{truncate_text(event.audio_transcript, 900)}"
             for event in speech_events
         ]
+        budgeted_transcripts: list[str] = []
+        total_chars = 0
+        for transcript in transcripts:
+            if total_chars + len(transcript) > TRANSCRIPT_PROMPT_BUDGET_CHARS:
+                break
+            budgeted_transcripts.append(transcript)
+            total_chars += len(transcript)
+        transcripts = budgeted_transcripts
         registry = get_model_registry()
         prompt = with_monitoring_evidence_context(
             f"Transcripts from {time_desc}{room_display}:\n"
@@ -546,10 +563,22 @@ async def check_activity(activity: str, hours: int = 24) -> ActivityCheckResult:
         descriptions = []
         for event in events:
             if event.video_description or event.audio_transcript:
+                description_text = (
+                    f"{truncate_text(event.video_description, 800)} "
+                    f"{truncate_text(event.audio_transcript, 600)}"
+                ).strip()
                 descriptions.append(
                     f"[{event.timestamp.strftime('%I:%M %p')}] {event.room_name}: "
-                    f"{event.video_description} {event.audio_transcript}".strip()
+                    f"{description_text}"
                 )
+        budgeted_descriptions: list[str] = []
+        total_chars = 0
+        for description in descriptions:
+            if total_chars + len(description) > ACTIVITY_PROMPT_BUDGET_CHARS:
+                break
+            budgeted_descriptions.append(description)
+            total_chars += len(description)
+        descriptions = budgeted_descriptions
 
         if not descriptions:
             return ActivityCheckResult(

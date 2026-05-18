@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -18,6 +19,7 @@ try:
     )
     from .llm.strands_runtime import invoke_structured, invoke_text
     from .object_detector import run_object_query
+    from .prompt_budget import compact_json_records, truncate_text
     from .semantic_search import SemanticSearchResult, run_semantic_query, run_semantic_retrieval
     from .time_agent import TimeWindowContext, get_time_window_context, run_time_query
 except ImportError:
@@ -29,6 +31,7 @@ except ImportError:
     )
     from llm.strands_runtime import invoke_structured, invoke_text
     from object_detector import run_object_query
+    from prompt_budget import compact_json_records, truncate_text
     from semantic_search import SemanticSearchResult, run_semantic_query, run_semantic_retrieval
     from time_agent import TimeWindowContext, get_time_window_context, run_time_query
 
@@ -52,6 +55,15 @@ class JeevesResponse(BaseModel):
 
 class QueryRoute(BaseModel):
     intent: Literal["object", "time", "semantic", "general"] = "general"
+    reason: str = ""
+
+
+class ResolvedQuery(BaseModel):
+    standalone_query: str = Field(
+        default="",
+        description="The user's current message rewritten as a standalone query.",
+    )
+    used_context: bool = False
     reason: str = ""
 
 
@@ -91,6 +103,8 @@ _TIME_REFERENCE_TERMS = (
     "this afternoon",
     "this evening",
 )
+SEMANTIC_JUDGE_BUDGET_CHARS = 14000
+SEMANTIC_ANSWER_BUDGET_CHARS = 20000
 
 
 def _build_activity_response(text: str, data: dict[str, Any]) -> JeevesResponse:
@@ -111,7 +125,17 @@ def _has_time_reference(query: str) -> bool:
     query_lower = query.lower()
     if any(term in query_lower for term in _TIME_REFERENCE_TERMS):
         return True
-    return any(char.isdigit() for char in query_lower)
+    return bool(
+        re.search(r"\b\d{4}-\d{2}-\d{2}\b", query_lower)
+        or re.search(r"\b\d{1,2}\s*(?:am|pm)\b", query_lower)
+        or re.search(r"\b(?:last|past)\s+\d+\s+(?:minute|minutes|hour|hours|day|days)\b", query_lower)
+        or re.search(
+            r"\b(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|"
+            r"jul|july|aug|august|sep|sept|september|oct|october|nov|november|"
+            r"dec|december)\s+\d{1,2},?\s+\d{4}\b",
+            query_lower,
+        )
+    )
 
 
 def _deterministic_route(query: str) -> Optional[QueryRoute]:
@@ -124,6 +148,54 @@ def _deterministic_route(query: str) -> Optional[QueryRoute]:
             reason="Transcript recall questions with a time reference use the time agent.",
         )
     return None
+
+
+def _has_conversation_context(conversation_context: Optional[str]) -> bool:
+    return bool(conversation_context and conversation_context.strip())
+
+
+async def _resolve_query_with_context(
+    query: str, conversation_context: Optional[str]
+) -> tuple[str, Optional[ResolvedQuery]]:
+    if not _has_conversation_context(conversation_context):
+        return query, None
+
+    registry = get_model_registry()
+    prompt = (
+        "Short-term conversation context from this browser session:\n"
+        f"{conversation_context}\n\n"
+        f"Current user message: {query}\n\n"
+        "Rewrite the current user message as a standalone query for the memory "
+        "assistant. Resolve pronouns like it, that, there, he, she, or they only "
+        "when the prior turns make the reference clear. Preserve the user's intent "
+        "and do not add facts that are not supported by the conversation."
+    )
+    try:
+        resolved = await invoke_structured(
+            prompt=prompt,
+            output_model=ResolvedQuery,
+            system_prompt=with_patient_cctv_context(
+                "You rewrite follow-up chat messages for a dementia-support "
+                "assistant. Use only the supplied short-term conversation context. "
+                "This context is not durable patient monitoring evidence; it is "
+                "only for interpreting the current chat session. If the current "
+                "message is already standalone, return it unchanged."
+            ),
+            model_id=registry.router,
+            structured_output_prompt=(
+                "Return standalone_query, used_context, and a short reason. "
+                "If the reference is ambiguous, keep the original wording."
+            ),
+            max_tokens=300,
+        )
+    except Exception as exc:
+        logger.warning("[CONVERSATION] Query resolution failed: %s", exc)
+        return query, None
+
+    standalone_query = resolved.standalone_query.strip()
+    if not standalone_query:
+        return query, resolved
+    return standalone_query, resolved
 
 
 async def _route_query(query: str) -> QueryRoute:
@@ -170,12 +242,12 @@ def _semantic_prompt_matches(result: SemanticSearchResult) -> list[dict[str, Any
                 "timestamp": match.timestamp,
                 "room_name": match.room_name,
                 "transcript_length": match.transcript_length,
-                "audio_transcript": match.audio_transcript[:800],
-                "video_description": match.video_description[:800],
-                "semantic_text": match.semantic_text[:1200],
+                "audio_transcript": truncate_text(match.audio_transcript, 700),
+                "video_description": truncate_text(match.video_description, 700),
+                "semantic_text": truncate_text(match.semantic_text, 900),
             }
         )
-    return matches
+    return compact_json_records(matches, max_chars=SEMANTIC_JUDGE_BUDGET_CHARS)
 
 
 def _semantic_answer_matches(result: SemanticSearchResult) -> list[dict[str, Any]]:
@@ -185,12 +257,12 @@ def _semantic_answer_matches(result: SemanticSearchResult) -> list[dict[str, Any
             {
                 "timestamp": match.timestamp,
                 "room_name": match.room_name,
-                "audio_transcript": match.audio_transcript[:1200],
-                "video_description": match.video_description[:1200],
-                "semantic_text": match.semantic_text[:1500],
+                "audio_transcript": truncate_text(match.audio_transcript, 1000),
+                "video_description": truncate_text(match.video_description, 1000),
+                "semantic_text": truncate_text(match.semantic_text, 1200),
             }
         )
-    return matches
+    return compact_json_records(matches, max_chars=SEMANTIC_ANSWER_BUDGET_CHARS)
 
 
 async def _judge_semantic_retrieval(
@@ -363,13 +435,24 @@ async def _handle_semantic_query(query: str) -> JeevesResponse:
     return _build_activity_response(final_text, response_data)
 
 
-async def _handle_general_query(query: str) -> JeevesResponse:
+async def _handle_general_query(
+    query: str, conversation_context: Optional[str] = None
+) -> JeevesResponse:
     registry = get_model_registry()
+    prompt = query
+    if _has_conversation_context(conversation_context):
+        prompt = (
+            "Short-term conversation context from this browser session:\n"
+            f"{conversation_context}\n\n"
+            f"Current user message: {query}"
+        )
     text = await invoke_text(
-        prompt=query,
+        prompt=prompt,
         system_prompt=with_patient_answer_context(
             "You are a kind, concise assistant for a dementia-support system. "
-            "Answer naturally and do not promise unsupported features."
+            "Answer naturally and do not promise unsupported features. You may "
+            "use the short-term conversation context to understand follow-up "
+            "messages, but do not treat it as stored monitoring evidence."
         ),
         model_id=registry.synthesis,
         max_tokens=300,
@@ -382,19 +465,33 @@ async def _handle_general_query(query: str) -> JeevesResponse:
     )
 
 
-async def run_single_query(query: str) -> JeevesResponse:
+async def run_single_query(
+    query: str, conversation_context: Optional[str] = None
+) -> JeevesResponse:
     try:
-        route = await _route_query(query)
+        resolved_query, conversation_resolution = await _resolve_query_with_context(
+            query, conversation_context
+        )
+        route = await _route_query(resolved_query)
         logger.info(
-            "[ROUTE] Query: '%s' -> intent=%s, reason='%s'",
+            "[ROUTE] Query: '%s' -> resolved='%s', intent=%s, reason='%s'",
             query[:80],
+            resolved_query[:80],
             route.intent,
             route.reason,
         )
+        conversation_data: dict[str, Any] = {
+            "original_query": query,
+            "resolved_query": resolved_query,
+        }
+        if conversation_resolution is not None:
+            conversation_data["conversation_resolution"] = (
+                conversation_resolution.model_dump(mode="json")
+            )
 
         if route.intent == "object":
-            logger.info("[TOOL CALL] Object search for: '%s'", query)
-            result = await run_object_query(query)
+            logger.info("[TOOL CALL] Object search for: '%s'", resolved_query)
+            result = await run_object_query(resolved_query)
             logger.info(
                 "[TOOL RESULT] Object search: found=%s, evidence_type=%s, "
                 "highlight_status=%s, image_path=%s",
@@ -411,13 +508,14 @@ async def run_single_query(query: str) -> JeevesResponse:
                 data={
                     "route_intent": route.intent,
                     "route_reason": route.reason,
+                    **conversation_data,
                     "object": result.model_dump(mode="json"),
                 },
             )
 
         if route.intent == "time":
-            logger.info("[TOOL CALL] Time-based query: '%s'", query)
-            result = await run_time_query(query)
+            logger.info("[TOOL CALL] Time-based query: '%s'", resolved_query)
+            result = await run_time_query(resolved_query)
             logger.info(
                 "[TOOL RESULT] Time query: response_type=%s, text_length=%d",
                 result.response_type,
@@ -430,13 +528,14 @@ async def run_single_query(query: str) -> JeevesResponse:
                 data={
                     "route_intent": route.intent,
                     "route_reason": route.reason,
+                    **conversation_data,
                     "time": result.model_dump(mode="json"),
                 },
             )
 
         if route.intent == "semantic":
-            logger.info("[TOOL CALL] Semantic memory search: '%s'", query)
-            response = await _handle_semantic_query(query)
+            logger.info("[TOOL CALL] Semantic memory search: '%s'", resolved_query)
+            response = await _handle_semantic_query(resolved_query)
             logger.info(
                 "[TOOL RESULT] Semantic query: response_type=%s, text_length=%d",
                 response.response_type,
@@ -445,13 +544,18 @@ async def run_single_query(query: str) -> JeevesResponse:
             if response.data is None:
                 response.data = {}
             response.data["route_reason"] = route.reason
+            response.data.update(conversation_data)
             return response
 
-        logger.info("[TOOL CALL] General query: '%s'", query)
-        response = await _handle_general_query(query)
+        logger.info("[TOOL CALL] General query: '%s'", resolved_query)
+        response = await _handle_general_query(
+            resolved_query,
+            conversation_context=conversation_context,
+        )
         response.data = {
             "route_intent": route.intent,
             "route_reason": route.reason,
+            **conversation_data,
         }
         return response
     except Exception as exc:

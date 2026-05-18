@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import datetime
 import json
 import logging
 import os
@@ -16,8 +15,10 @@ from pydantic import BaseModel, Field
 
 try:
     from .llm.settings import load_project_env, resolve_gemini_spatial_model
+    from .timezone_utils import now_local
 except ImportError:
     from llm.settings import load_project_env, resolve_gemini_spatial_model
+    from timezone_utils import now_local
 
 
 logger = logging.getLogger(__name__)
@@ -266,7 +267,7 @@ def _save_highlighted_image(
         line_width = max(3, round(min(highlighted.width, highlighted.height) / 160))
         draw.rectangle((left, top, right, bottom), outline="red", width=line_width)
 
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = now_local().strftime("%Y%m%d_%H%M%S")
         safe_name = "".join(ch for ch in object_name if ch.isalnum()) or "object"
         saved_path = output_path / f"{safe_name}_{timestamp}.png"
         highlighted.save(saved_path, format="PNG")

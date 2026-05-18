@@ -101,6 +101,14 @@ class ProviderSettings(BaseModel):
     chroma_persist_dir: str = Field(default_factory=_default_chroma_persist_dir)
     chroma_collection_name: str = Field(default="memory_events")
     semantic_search_top_k: int = Field(default=5)
+    safety_agent_enabled: bool = Field(default=True)
+    safety_alert_min_severity: str = Field(default="medium")
+    firebase_project_id: Optional[str] = None
+    firebase_credentials_path: Optional[str] = None
+    firebase_android_package: Optional[str] = None
+    patient_home_lat: Optional[float] = None
+    patient_home_lng: Optional[float] = None
+    patient_geofence_radius_meters: float = Field(default=100.0)
     default_temperature: float = Field(default=0.1)
     default_max_tokens: int = Field(default=1200)
     request_timeout_seconds: float = Field(default=120.0)
@@ -156,6 +164,23 @@ def _resolve_embedding_provider() -> Literal["ollama", "bedrock"]:
     if provider in ("bedrock", "nova", "aws"):
         return "bedrock"
     return "ollama"
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _env_float(name: str) -> Optional[float]:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 @lru_cache(maxsize=1)
@@ -225,4 +250,15 @@ def get_provider_settings() -> ProviderSettings:
             "CHROMA_COLLECTION_NAME", "memory_events"
         ),
         semantic_search_top_k=int(os.getenv("SEMANTIC_SEARCH_TOP_K", "5")),
+        safety_agent_enabled=_env_bool("SAFETY_AGENT_ENABLED", True),
+        safety_alert_min_severity=os.getenv(
+            "SAFETY_ALERT_MIN_SEVERITY", "medium"
+        ).strip().lower(),
+        firebase_project_id=os.getenv("FIREBASE_PROJECT_ID"),
+        firebase_credentials_path=os.getenv("FIREBASE_CREDENTIALS_PATH"),
+        firebase_android_package=os.getenv("FIREBASE_ANDROID_PACKAGE"),
+        patient_home_lat=_env_float("PATIENT_HOME_LAT"),
+        patient_home_lng=_env_float("PATIENT_HOME_LNG"),
+        patient_geofence_radius_meters=_env_float("PATIENT_GEOFENCE_RADIUS_METERS")
+        or 100.0,
     )

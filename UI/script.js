@@ -1,10 +1,48 @@
 const chatContainer = document.getElementById('chat-container');
 const chatForm = document.getElementById('chat-form');
 const userInput = document.getElementById('user-input');
+const newChatBtn = document.getElementById('new-chat-btn');
 const statusIndicator = document.querySelector('.status-indicator');
 
 // Store the API URL - in this case relative
 const API_URL = '/query';
+const RESET_URL = '/conversation/reset';
+const SESSION_STORAGE_KEY = 'memoriaConversationSessionId';
+
+let conversationSessionId = getOrCreateSessionId();
+
+function createSessionId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+    }
+    return `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function getOrCreateSessionId() {
+    const existingSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (existingSessionId) {
+        return existingSessionId;
+    }
+    const nextSessionId = createSessionId();
+    sessionStorage.setItem(SESSION_STORAGE_KEY, nextSessionId);
+    return nextSessionId;
+}
+
+function startFreshSession() {
+    conversationSessionId = createSessionId();
+    sessionStorage.setItem(SESSION_STORAGE_KEY, conversationSessionId);
+}
+
+function renderWelcomeMessage() {
+    chatContainer.innerHTML = `
+        <div class="message system">
+            <div class="bubble">
+                <p>Hello, I am Memoria. How can I assist you today?</p>
+            </div>
+        </div>
+    `;
+    scrollToBottom();
+}
 
 chatForm.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -31,7 +69,10 @@ chatForm.addEventListener('submit', async (e) => {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ query: query })
+            body: JSON.stringify({
+                query: query,
+                session_id: conversationSessionId
+            })
         });
 
         if (!response.ok) {
@@ -50,6 +91,25 @@ chatForm.addEventListener('submit', async (e) => {
         removeMessage(loadingId);
         addMessage(`Error: ${error.message}`, 'bot');
         console.error('Error querying Jeeves:', error);
+    }
+});
+
+newChatBtn.addEventListener('click', async () => {
+    const sessionIdToReset = conversationSessionId;
+    startFreshSession();
+    renderWelcomeMessage();
+    userInput.focus();
+
+    try {
+        await fetch(RESET_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ session_id: sessionIdToReset })
+        });
+    } catch (error) {
+        console.error('Error resetting conversation:', error);
     }
 });
 

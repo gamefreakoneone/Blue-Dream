@@ -39,6 +39,10 @@
 ```json
 { "query": "Where are my keys?" }
 ```
+- Optional request body for short-term conversation context:
+```json
+{ "query": "What room was that in?", "session_id": "browser-session-id" }
+```
 - Response model shape:
 ```json
 {
@@ -48,6 +52,7 @@
   "data": "object | null"
 }
 ```
+- `POST /conversation/reset` accepts `{ "session_id": "browser-session-id" }` and clears only in-process chat context.
 - Static media mounts:
   - `/capture/*` maps to `Capture/`
   - `/storage/*` maps to `Storage/`
@@ -202,44 +207,126 @@
 - Confirmed sampled Chroma event IDs map back to Mongo `events` records.
 - Confirmed `/query` route smokes for semantic, time, object, and general queries preserve the response model.
 
+## Phase 2.5: Conversation Session Memory
+**Status:** Validated
+
+### Current Situation
+- The patient web chat now supports optional short-term session memory for follow-up questions.
+- `POST /query` still accepts the original `{ "query": "..." }` body for standalone clients.
+- When the UI supplies `session_id`, the backend keeps recent turns in process memory and passes compact context into Jeeves.
+- Conversation context is used to rewrite follow-up messages into standalone queries before routing and for general-chat responses only.
+- The UI has a New Chat action that resets the backend session context and starts a fresh browser session ID.
+
+### What We Did
+- Added `Blue_dream_agents/conversation_memory.py` as a process-local store with recent-turn limits and inactive-session expiry.
+- Extended `Blue_dream_agents/api.py` with optional `session_id` handling and `POST /conversation/reset`.
+- Updated `Blue_dream_agents/jeeves.py` so object, time, and semantic tools receive a standalone resolved query while the response schema remains unchanged.
+- Updated the static UI to generate a session ID, send it with `/query`, and expose New Chat.
+- Kept MongoDB memory events and ChromaDB semantic indexing untouched.
+
+### Moving Forward
+- Phase 3 remains the next planned implementation target.
+- Future mobile chat can reuse the optional `session_id` contract for per-session context.
+
+### Validation
+- Ran `python -m compileall -q Blue_dream_agents`.
+- Ran a FastAPI `TestClient` smoke with mocked assistant calls for:
+  - legacy `{ "query": "..." }` requests
+  - `{ "query": "...", "session_id": "..." }` requests
+  - context accumulation across turns
+  - `POST /conversation/reset`
+  - unchanged `JeevesResponse` keys
+- Ran a Jeeves resolver smoke with mocked LLM/router calls confirming a follow-up query is rewritten and routed with conversation context.
+
+## Phase 2.6: Memory Stack Audit Remediation
+**Status:** Validated
+
+### Current Situation
+- The memory stack now has first-pass hardening for schema safety, ingestion reliability, vector-index maintenance, and prompt budgets.
+- MongoDB remains the durable event store, and Chroma remains rebuildable semantic index state.
+- Conversation memory remains process-local only and is not stored as patient evidence.
+
+### What We Did
+- Added MongoDB index setup for `timestamp`, `room_number + timestamp`, `event_id`, and `video_path`, called from API startup and the consolidator path.
+- Fixed Gemini video result defaults so `room_objects` defaults to an empty list instead of a string.
+- Updated the consolidator to use the shared MongoDB client, skip duplicate inserts by `video_path`, persist partial video/audio results, and still attempt semantic indexing after Mongo writes.
+- Added prompt-budget compaction for high-volume time, object, and semantic evidence prompts.
+- Cleaned `semantic_text` generation so empty fields no longer embed `"None"` sentinel text.
+- Hardened Chroma reset/stale-vector cleanup and invalid `event_id` serialization behavior.
+- Tightened conversation memory so object/time/semantic tools use the resolved standalone query without also receiving full chat history.
+
+### Moving Forward
+- Phase 3 remains the next planned implementation target.
+- Future durability work can add a persistent dead-letter queue for failed video tasks and stronger content-hash idempotency.
+
+### Validation
+- Ran bytecode-free syntax compile smoke for touched Python files.
+- Ran unit-style smokes for:
+  - `video_results` defaults
+  - valid and invalid `memory_event_to_mongo` event IDs
+  - empty-field semantic text
+  - prompt-budget compaction
+  - narrower time-reference detection
+- Ran FastAPI `TestClient` smoke for legacy `/query`, session `/query`, `/conversation/reset`, and unchanged response keys.
+- Ran consolidator smoke confirming an audio failure still persists video results and duplicate `video_path` does not create a second insert.
+- Ran local MongoDB index smoke and confirmed the expected indexes exist.
+- Ran mocked retrieval-routing smoke for object, time, and semantic branches.
+
 ## Phase 3: Gemma Safety Agent
-**Status:** Planned
+**Status:** In Progress
 
 ### Current Situation
 - `Capture/camera_feed.py` starts recording when a person is detected.
 - When the person exits the room, recording stops after a short detection buffer.
 - The recorded video is queued through `Capture/video_processing_queue.py`.
 - `Blue_dream_agents/consolidator.py` calls `Blue_dream_agents/video_agent.py`.
-- `video_agent.py` currently asks Gemini for:
+- `video_agent.py` asks Gemini for:
   - `video_description`
   - `room_objects`
-- There is no persisted safety assessment, warning decision, severity, or alert reason.
+- The planned implementation extends Gemini output with factual safety observations:
+  - `danger_candidate`
+  - `scene_end_state`
+  - `observed_hazards`
+  - `uncertainties`
+- A new Gemma safety judge will own the warning decision and patient-facing explanation.
+- Safety decisions will be persisted with the memory event.
+- Actionable patient alerts will be stored in `safety_alerts`.
 - The current model does not use a deterministic stove timer, person count policy, or external gas sensor.
 - The first safety feature is intended to be visual and event-based.
 
 ### What We Will Do
 - Keep Gemini as a full-video perception tool for the reliable path.
-- Extend the video analysis output with factual observation fields:
-  - `scene_end_state`
-  - `observed_hazards`
-  - `uncertainties`
-- Add a Gemma safety judge that reads the factual observation bundle and decides:
-  - whether a warning is needed
-  - severity
-  - reason
-  - patient-facing message
-  - whether caretaker notification is recommended
+- Extend the video analysis output with factual safety fields only; Gemini must not decide whether to alert.
+- Retry transient Gemini video-analysis failures such as 503 high-demand responses before storing a partial event.
+- Add `Blue_dream_agents/safety_agent.py` as the Gemma safety judge.
+- The safety judge reads:
+  - Gemini factual video output
+  - room metadata
+  - timestamp
+  - final screenshot path, when available
+- The safety judge returns:
+  - `warning_needed`
+  - `severity`
+  - `hazard_type`
+  - `confidence`
+  - `patient_message`
+  - `detailed_explanation`
+  - `recommended_action`
+  - `caretaker_recommended`
 - Initial safety scenario:
   - patient leaves a kitchen while a potentially dangerous cooking or stove/gas situation remains active.
 - The safety judge should use conservative rules:
   - alert only when the observation clearly supports a risk
   - record uncertainty when the scene is ambiguous
   - avoid inventing hazards not present in the description
-- Persist safety decisions with the event or in a new `safety_alerts` collection.
+- Persist safety decisions with the event.
+- If `warning_needed=true` and severity meets `SAFETY_ALERT_MIN_SEVERITY`, create a `safety_alerts` record.
+- Safety assessment and alert creation failures must not block memory event insertion or Chroma indexing.
 
 ### Moving Forward
 - After Phase 3, the project has an autonomous safety decision path where Gemma, not Gemini, owns the warning decision.
 - This is the key hackathon story: Gemma is the local safety reasoning agent.
+- The React Native app can build against the alert API contract before real FCM delivery is fully configured.
 
 ### Validation
 - Test with at least one normal safe scene.
@@ -247,14 +334,15 @@
 - Test with one ambiguous scene where the system should store uncertainty rather than alert.
 - Confirm MongoDB writes still include the canonical memory event fields.
 - Confirm safety decision failures do not block memory event insertion.
+- Confirm `/query` and `/conversation/reset` remain unchanged.
 
 ## Phase 4: Alert Delivery
-**Status:** Planned
+**Status:** In Progress
 
 ### Current Situation
 - Fall alerts are currently hardcoded inside `Capture/camera_feed.py`.
 - The hardcoded fall alert sends email through Gmail.
-- There is no generic alert service or recipient policy.
+- A generic alert service is being introduced for patient-actionable safety alerts.
 - A fallen patient should not primarily receive a notification saying they fell.
 - Patient notifications are appropriate only for actionable prompts, such as:
   - return to the kitchen
@@ -262,7 +350,7 @@
   - follow guidance home
 
 ### What We Will Do
-- Add a generic alert service interface.
+- Add `Blue_dream_agents/alert_service.py` as the generic alert service interface.
 - Move hardcoded fall email behavior behind that alert service.
 - Define alert recipient policy:
   - fall detected: notify caretaker or emergency contact, not the fallen patient
@@ -270,15 +358,24 @@
   - high-severity kitchen risk: notify patient and caretaker
   - geofence exit: notify patient first, then caretaker if no safe response
   - low-confidence hazard: store only
-- Keep Gmail/email as the first working backend.
-- Plan Firebase Cloud Messaging for mobile push notifications, but do not block the phase on full mobile push if email works.
+- Use Firebase Cloud Messaging HTTP v1 as the planned patient push backend.
+- Keep FCM optional for local development: if credentials are absent, alert records are stored with `delivery_status=not_configured` or `no_devices`.
 - Store alert records with:
+  - `alert_id`
   - alert type
   - severity
   - target recipient role
   - message
   - linked event ID
+  - detail text for the mobile alert page
+  - best-effort highlighted hazard image path, falling back to the original screenshot
+  - `deep_link`, for example `memoria://alerts/{alert_id}`
   - delivery status
+- Add mobile-compatible endpoints:
+  - `POST /devices/register`
+  - `GET /alerts/patient?status=open`
+  - `GET /alerts/{alert_id}`
+  - `POST /alerts/{alert_id}/ack`
 
 ### Moving Forward
 - After Phase 4, safety decisions can turn into real notifications through a clean policy layer.
@@ -289,20 +386,29 @@
 - Trigger an unattended kitchen warning and confirm it targets the patient when actionable.
 - Confirm hardcoded recipient logic is removed or isolated behind config.
 - Confirm alert records are stored or logged for later dashboard/mobile use.
+- Confirm endpoints return JSON without exposing MongoDB `ObjectId` values.
 
 ## Phase 5: Mobile Patient App
 **Status:** Planned
 
 ### Current Situation
-- `Mobile/` contains a Kotlin Compose Android skeleton.
+- `Mobile/` is effectively empty in the current checkout, despite earlier roadmap wording about a Kotlin Compose skeleton.
 - The main patient surface is still the FastAPI-served web UI.
 - The mobile app does not yet provide chat, alert responses, geofence behavior, or Maps navigation.
 
 ### What We Will Do
-- Build a text-first Android patient companion.
+- Build a text-first Expo React Native Android patient companion.
 - Add backend configuration for local development API URL.
 - Add patient chat against `POST /query`.
+- Mirror the current `UI/` chat behavior:
+  - stable per-session `session_id`
+  - New Chat action through `POST /conversation/reset`
+  - render `text`
+  - render optional `image_path` for object localization
+  - rewrite Windows/local `/Storage/` and `/Capture/` image paths to backend `/storage/` and `/capture/` URLs
 - Add a basic alerts view for patient-actionable alerts.
+- Add push notification registration against `POST /devices/register`.
+- Open alert details from notification deep links such as `memoria://alerts/{alert_id}`.
 - Add simple patient response actions:
   - `I'm OK`
   - `Guide me home`
@@ -322,7 +428,10 @@
 ### Validation
 - Build the Android app.
 - Confirm text chat can call the backend `/query`.
+- Confirm object localization images render from `/storage` or `/capture` URLs.
 - Confirm a patient-action alert can be displayed.
+- Confirm FCM registration can call `/devices/register`.
+- Confirm a notification tap opens the alert detail screen.
 - Confirm `Guide me home` launches Google Maps navigation with configured home coordinates.
 
 ## Phase 6: Caretaker Dashboard
@@ -339,6 +448,15 @@
   - view current geofence settings
   - update home latitude/longitude/radius
   - view recent safety alerts
+- Geofence-compatible backend endpoints are planned as:
+  - `GET /geofence/current`
+  - `PUT /geofence/current`
+  - `POST /geofence/events`
+- Hackathon geofence behavior:
+  - backend stores one default home center and radius
+  - mobile checks location locally in the background
+  - mobile posts an exit event when outside the radius
+  - mobile opens Google Maps to the configured home coordinates when the patient taps Guide me home
 - Keep authentication simple for demo unless the project is being prepared for real deployment.
 - Avoid live video, rich analytics, and complex patient monitoring in v1.
 
@@ -425,8 +543,15 @@
 - `EMBEDDING_PROVIDER=ollama`
 - `LOCAL_EMBEDDING_MODEL=nomic-embed-text`
 - `CHROMA_EMBEDDING_DIMENSION=768`
+- `GEMINI_VIDEO_MODEL=gemini-3-flash-preview`
+- `GEMINI_VIDEO_FALLBACK_MODELS=gemini-2.5-flash`
+- `GEMINI_VIDEO_MAX_RETRIES=3`
+- `GEMINI_VIDEO_RETRY_BASE_SECONDS=4`
 - `SAFETY_AGENT_ENABLED=true`
 - `SAFETY_ALERT_MIN_SEVERITY=medium`
+- `FIREBASE_PROJECT_ID=<firebase-project-id>`
+- `FIREBASE_CREDENTIALS_PATH=<gitignored-service-account-json-path>`
+- `FIREBASE_ANDROID_PACKAGE=<android-package-name>`
 - `PATIENT_HOME_LAT=<latitude>`
 - `PATIENT_HOME_LNG=<longitude>`
 - `PATIENT_GEOFENCE_RADIUS_METERS=<radius>`

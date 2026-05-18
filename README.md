@@ -121,6 +121,8 @@ NOVA_SYNTHESIS_MODEL=us.amazon.nova-2-lite-v1:0
 NOVA_VISION_MODEL=us.amazon.nova-2-lite-v1:0
 NOVA_VISION_FALLBACK_MODEL=us.amazon.nova-lite-v1:0
 NOVA_EMBEDDING_MODEL=amazon.nova-2-multimodal-embeddings-v1:0
+GEMINI_VIDEO_MODEL=gemini-3-flash-preview
+GEMINI_VIDEO_FALLBACK_MODELS=gemini-2.5-flash
 GEMINI_SPATIAL_MODEL=gemini-2.5-flash
 CHROMA_PERSIST_DIR=Storage/chroma
 CHROMA_COLLECTION_NAME=memory_events
@@ -135,6 +137,7 @@ Important defaults and behavior:
 - Nova embeddings default to `amazon.nova-2-multimodal-embeddings-v1:0`
 - Chroma persistence defaults to `Storage/chroma`
 - `OPENAI_API_KEY` is only a backward-compatible fallback for transcription, not the active `/query` runtime
+- Gemini video analysis defaults to `gemini-3-flash-preview` with `gemini-2.5-flash` as the fallback model for temporary availability issues.
 - Gemini spatial model resolution falls back from `GEMINI_SPATIAL_MODEL` to `GEMINI_VIDEO_MODEL` to `gemini-2.5-flash`
 
 ## Running the System

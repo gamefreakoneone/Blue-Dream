@@ -2,7 +2,7 @@ import os
 import base64
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import pickle
@@ -13,6 +13,11 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+
+try:
+    from Blue_dream_agents.timezone_utils import now_local
+except ImportError:
+    from timezone_utils import now_local
 
 
 class GmailAgent:
@@ -473,7 +478,7 @@ class GmailAgent:
         """Get emails received in the last X minutes"""
         # Gmail query for recent emails
         after_timestamp = int(
-            (datetime.now() - timedelta(minutes=minutes_ago)).timestamp()
+            (now_local() - timedelta(minutes=minutes_ago)).timestamp()
         )
         query = f"after:{after_timestamp}"
 

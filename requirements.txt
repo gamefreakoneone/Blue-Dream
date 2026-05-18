@@ -8,6 +8,7 @@ opencv-python        # Camera capture and video processing
 
 # AI APIs
 google-genai         # Gemini API for video analysis
+google-auth          # Firebase Cloud Messaging HTTP v1 service-account auth
 google-auth-oauthlib # Gmail OAuth flow
 google-api-python-client # Gmail API client
 openai               # OpenAI API for transcription and image editing

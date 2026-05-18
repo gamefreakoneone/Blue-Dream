@@ -51,7 +51,7 @@ def send_fall_alert(
     if frame is not None and screenshot_dir is not None:
         try:
             os.makedirs(screenshot_dir, exist_ok=True)
-            screenshot_filename = f"fall_alert_{camera_idx}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.jpg"
+            screenshot_filename = f"fall_alert_{camera_idx}_{now_local().strftime('%Y-%m-%d_%H-%M-%S')}.jpg"
             screenshot_path = os.path.join(screenshot_dir, screenshot_filename)
             cv2.imwrite(screenshot_path, frame)
             print(f"📸 Fall screenshot saved: {screenshot_path}")
@@ -242,7 +242,7 @@ def camera_feed():
                         if fall_duration >= 3.5:
                             # Confirmed fall for 3.5 seconds - send alert with screenshot
                             if recording_active[idx] and not fall_alert_sent[idx]:
-                                timestamp_str = datetime.now().strftime(
+                                timestamp_str = now_local().strftime(
                                     "%Y-%m-%d %H:%M:%S"
                                 )
                                 send_fall_alert(
@@ -262,7 +262,7 @@ def camera_feed():
                     recording_start_timestamp[idx] = (
                         now_local()
                     )  # Capture timestamp at start
-                    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                    timestamp = now_local().strftime("%Y-%m-%d_%H-%M-%S")
                     video_filename = os.path.join(
                         video_output_dirs[idx], f"camera_{idx}_{timestamp}.mp4"
                     )

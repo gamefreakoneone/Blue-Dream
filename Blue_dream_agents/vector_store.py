@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import sqlite3
+import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
 
 
 PRODUCTION_EMBEDDING_DIMENSION = 768
+logger = logging.getLogger(__name__)
 
 
 def _ensure_chroma_available() -> None:
@@ -212,6 +214,12 @@ def delete_event_ids(event_ids: list[str]) -> None:
     get_event_collection().delete(ids=event_ids)
 
 
+def list_indexed_event_ids() -> list[str]:
+    results = get_event_collection().get(include=[])
+    ids = results.get("ids", [])
+    return [str(event_id) for event_id in ids]
+
+
 def inspect_production_index() -> dict[str, Any]:
     settings = get_provider_settings()
     persist_dir = Path(settings.chroma_persist_dir)
@@ -270,8 +278,9 @@ def reset_production_index() -> str:
     if persist_dir.exists():
         try:
             shutil.rmtree(persist_dir)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("Unable to reset Chroma persist dir %s: %s", persist_dir, exc)
+            raise _wrap_chroma_error(f"reset persist dir '{persist_dir}'", exc) from None
     persist_dir.mkdir(parents=True, exist_ok=True)
     return str(persist_dir)
 

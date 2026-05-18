@@ -27,6 +27,7 @@ try:
         get_embedding_dimension,
         get_embedding_metadata,
         inspect_production_index,
+        list_indexed_event_ids,
         query_similar_embeddings,
         reset_production_index,
         upsert_event_embedding,
@@ -49,6 +50,7 @@ except ImportError:
         get_embedding_dimension,
         get_embedding_metadata,
         inspect_production_index,
+        list_indexed_event_ids,
         query_similar_embeddings,
         reset_production_index,
         upsert_event_embedding,
@@ -157,6 +159,19 @@ async def _index_all_mongo_events() -> bool:
     return indexed_any
 
 
+async def _remove_stale_index_entries() -> int:
+    indexed_ids = await _run_blocking(list_indexed_event_ids)
+    if not indexed_ids:
+        return 0
+
+    existing_events = await _fetch_events_by_ids(indexed_ids)
+    existing_ids = {event.event_id for event in existing_events}
+    stale_ids = [event_id for event_id in indexed_ids if event_id not in existing_ids]
+    if stale_ids:
+        await _run_blocking(delete_event_ids, stale_ids)
+    return len(stale_ids)
+
+
 def _index_requires_reset(index_state: dict[str, Any]) -> bool:
     if index_state.get("error"):
         return True
@@ -211,6 +226,13 @@ async def ensure_semantic_index_synced(force_rebuild: bool = False) -> str:
 
         mongo_count = await _count_mongo_events()
         if indexed_count > 0:
+            if indexed_count > mongo_count:
+                removed_count = await _remove_stale_index_entries()
+                if removed_count:
+                    logger.info(
+                        "Removed %d stale semantic index entries.", removed_count
+                    )
+                    indexed_count = await _run_blocking(count_indexed_events)
             if mongo_count and indexed_count < mongo_count:
                 logger.info(
                     "Semantic index has %s events but Mongo has %s; syncing missing events.",

@@ -1,5 +1,16 @@
 .env
+firebase-service-account*.json
+*firebase-adminsdk*.json
 Storage
+Mobile/.env
+Mobile/node_modules/
+Mobile/.expo/
+Mobile/dist/
+Mobile/android/
+Mobile/ios/
+Mobile/.claude/
+Mobile/AGENTS.md
+Mobile/CLAUDE.md
 Agents\test_data
 trash.py
 Agents/agent_builder.ipynb
@@ -14,3 +25,5 @@ old shit.txt
 update_db.js
 Proof
 saul_script.md
+References
+Mobile/google-services.json

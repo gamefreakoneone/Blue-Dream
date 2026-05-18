@@ -19,6 +19,7 @@ try:
     )
     from .llm.strands_runtime import invoke_multimodal_structured, invoke_structured
     from .memory_schema import MemoryEvent, ROOMS, memory_event_from_mongo
+    from .prompt_budget import compact_json_records, truncate_text
     from .timezone_utils import now_local
 except ImportError:
     from db_client import get_mongo_client, close_mongo_client
@@ -30,6 +31,7 @@ except ImportError:
     )
     from llm.strands_runtime import invoke_multimodal_structured, invoke_structured
     from memory_schema import MemoryEvent, ROOMS, memory_event_from_mongo
+    from prompt_budget import compact_json_records, truncate_text
     from timezone_utils import now_local
 
 
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 HISTORY_LOOKBACK_HOURS = 48
 HISTORY_EVENT_LIMIT = 80
+HISTORY_PROMPT_BUDGET_CHARS = 18000
 
 
 class SearchResult(BaseModel):
@@ -255,18 +258,25 @@ def _current_visual_description(
 
 
 def _serialize_history_events(events: List[MemoryEvent]) -> List[Dict[str, Any]]:
-    return [
+    records = [
         {
             "event_id": event.event_id,
             "timestamp": event.timestamp.isoformat(),
             "room_name": event.room_name,
-            "video_description": event.video_description[:1200],
+            "video_description": truncate_text(event.video_description, 700),
             "room_objects": event.room_objects,
-            "audio_transcript": event.audio_transcript[:800],
+            "audio_transcript": truncate_text(event.audio_transcript, 400),
             "screenshot_available": bool(event.screenshot_path),
         }
         for event in events
     ]
+    return compact_json_records(records, max_chars=HISTORY_PROMPT_BUDGET_CHARS)
+
+
+def _existing_path_or_none(path: Optional[str]) -> Optional[str]:
+    if path and os.path.exists(path):
+        return path
+    return None
 
 
 async def _analyze_last_known_location(
@@ -358,12 +368,12 @@ async def _highlight_object(
         )
         if result:
             logger.info("Highlight generated successfully: %s", result)
-        else:
-            logger.warning(
-                "Highlight returned None for '%s' - Gemini may not have found a bounding box.",
-                object_name,
-            )
-        return result
+            return _existing_path_or_none(result)
+        logger.warning(
+            "Highlight returned None for '%s' - Gemini may not have found a bounding box.",
+            object_name,
+        )
+        return None
     except Exception as exc:
         logger.warning("Highlight failed for %s: %s", object_name, exc)
         return None
@@ -414,7 +424,7 @@ async def search_for_object(user_query: str) -> SearchResult:
             )
             # If highlighting failed, fall back to the original screenshot so the
             # user can at least see the room where the object was found.
-            image_path_to_return = highlight_path or room.screenshot_path
+            image_path_to_return = highlight_path or _existing_path_or_none(room.screenshot_path)
             return SearchResult(
                 found=True,
                 room_number=room.room_number,

@@ -3,13 +3,14 @@ import datetime
 import logging
 import os
 
-from motor.motor_asyncio import AsyncIOMotorClient
-
 from .audio_transcribe import Audio_agent
-from .memory_schema import memory_event_to_mongo, new_memory_event
+from .db_client import ensure_events_indexes, get_events_collection
+from .memory_schema import memory_event_from_mongo, memory_event_to_mongo, new_memory_event
 from .semantic_search import index_memory_event
+from .safety_agent import assess_event_safety, empty_safety_assessment
+from .alert_service import create_alert_for_safety_assessment
 from .timezone_utils import now_local
-from .video_agent import Video_Agent
+from .video_agent import Video_Agent, video_results
 
 # So video is recorded. Then it is passed to the consolidator agent.
 # The consolidator agent will call the video_agent, to describe the video, and the audio_agent which will then transcribe the audio
@@ -28,11 +29,19 @@ from .video_agent import Video_Agent
 logger = logging.getLogger(__name__)
 
 
-# MongoDB setup
-def get_mongodb_client(connection_string: str = None):
-    if connection_string is None:
-        connection_string = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-    return AsyncIOMotorClient(connection_string)
+def _path_variants(path: str) -> list[str]:
+    if not path:
+        return []
+    variants = [path, os.path.normpath(path)]
+    try:
+        variants.append(os.path.abspath(path))
+    except OSError:
+        pass
+    return list(dict.fromkeys(variants))
+
+
+def _brief_failure_note(modality: str) -> str:
+    return f"{modality} unavailable for this recording."
 
 
 async def consolidator_agent(
@@ -46,21 +55,51 @@ async def consolidator_agent(
     if timestamp is None:
         timestamp = now_local()
 
-    mongodb_client = get_mongodb_client(mongo_connection_string)
-    db = mongodb_client.dementia_assistance  # This is initalizing the database
-    collection = db.events  # This is initializing the tables within the database
+    if mongo_connection_string:
+        logger.warning(
+            "consolidator_agent ignores mongo_connection_string and uses shared db_client settings."
+        )
 
-    # TODO : Create also a VectorDB here for semantic search. (Future task)
+    await ensure_events_indexes()
+    collection = get_events_collection()
+    existing_doc = await collection.find_one({"video_path": {"$in": _path_variants(video_path)}})
+    if existing_doc:
+        existing_event = memory_event_from_mongo(existing_doc)
+        try:
+            await index_memory_event(existing_event)
+        except Exception as exc:
+            logger.warning(
+                "Duplicate event %s found but semantic re-index failed: %s",
+                existing_event.event_id,
+                exc,
+            )
+        return existing_doc.get("_id") or existing_event.event_id
 
     # Run video description and audio transcription in parallel (independent tasks)
     video_agent = Video_Agent()
     audio_agent = Audio_agent()
     loop = asyncio.get_running_loop()
 
-    video_details, audio_transcript = await asyncio.gather(
+    video_result, audio_result = await asyncio.gather(
         loop.run_in_executor(None, video_agent.video_description, video_path),
         loop.run_in_executor(None, audio_agent.transcribe_audio, audio_path),
+        return_exceptions=True,
     )
+
+    if isinstance(video_result, Exception):
+        logger.warning("Video description failed for %s: %s", video_path, video_result)
+        video_details = video_results(
+            video_description=_brief_failure_note("Video analysis"),
+            room_objects=[],
+        )
+    else:
+        video_details = video_result
+
+    if isinstance(audio_result, Exception):
+        logger.warning("Audio transcription failed for %s: %s", audio_path, audio_result)
+        audio_transcript = _brief_failure_note("Audio transcription")
+    else:
+        audio_transcript = str(audio_result or "")
 
     # we will now create a JSON object which is going to be stored in the database
 
@@ -71,12 +110,40 @@ async def consolidator_agent(
         room_objects=video_details.room_objects,
         audio_transcript=audio_transcript,
         screenshot_path=screenshot_path,
-        video_path=video_path,
-        audio_path=audio_path,
+        video_path=os.path.normpath(video_path),
+        audio_path=os.path.normpath(audio_path),
+        danger_candidate=video_details.danger_candidate,
+        scene_end_state=video_details.scene_end_state,
+        observed_hazards=video_details.observed_hazards,
+        uncertainties=video_details.uncertainties,
     )
+
+    try:
+        safety_assessment = await assess_event_safety(event)
+    except Exception as exc:
+        logger.warning(
+            "Safety assessment failed for event %s but ingestion will continue: %s",
+            event.event_id,
+            exc,
+        )
+        safety_assessment = empty_safety_assessment(
+            f"Safety assessment failed: {exc}"
+        )
+    event.safety_assessment = safety_assessment.model_dump(mode="json")
+
     document = memory_event_to_mongo(event)
     result = await collection.insert_one(document)
     print(f"Inserted document with ID: {result.inserted_id}")
+
+    try:
+        await create_alert_for_safety_assessment(event, safety_assessment)
+    except Exception as exc:
+        logger.warning(
+            "Safety alert creation failed for event %s but ingestion will continue: %s",
+            event.event_id,
+            exc,
+        )
+
     try:
         await index_memory_event(event)
     except Exception as exc:
@@ -85,6 +152,4 @@ async def consolidator_agent(
             event.event_id,
             exc,
         )
-
-    mongodb_client.close()
     return result.inserted_id

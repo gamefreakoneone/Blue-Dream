@@ -83,6 +83,37 @@ header {
     margin-right: -4px;
 }
 
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+#new-chat-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid rgba(16, 185, 129, 0.18);
+    background-color: #ffffff;
+    color: var(--primary-color);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s, border-color 0.2s, transform 0.1s;
+}
+
+#new-chat-btn:hover {
+    background-color: var(--bot-bubble);
+    border-color: rgba(16, 185, 129, 0.35);
+}
+
+#new-chat-btn:active {
+    transform: scale(0.98);
+}
+
 .status-indicator {
     width: 10px;
     height: 10px;
@@ -211,6 +242,23 @@ header {
 
 #send-btn:active {
     transform: scale(0.95);
+}
+
+@media (max-width: 480px) {
+    header {
+        padding: 18px 20px;
+    }
+
+    #new-chat-btn span {
+        display: none;
+    }
+
+    #new-chat-btn {
+        width: 38px;
+        height: 38px;
+        justify-content: center;
+        padding: 0;
+    }
 }
 
 /* Loading Dots */

@@ -30,7 +30,12 @@ class MemoryEvent(BaseModel):
     screenshot_path: str = ""
     video_path: str = ""
     audio_path: str = ""
-    semantic_text: str
+    semantic_text: str = ""
+    danger_candidate: bool = False
+    scene_end_state: str = ""
+    observed_hazards: list[str] = Field(default_factory=list)
+    uncertainties: list[str] = Field(default_factory=list)
+    safety_assessment: dict[str, Any] | None = None
 
 
 def get_room_name(room_number: int) -> str:
@@ -51,9 +56,12 @@ def normalize_timestamp(value: Any) -> datetime.datetime:
         dt_value = now_local()
 
     if dt_value.tzinfo is None:
-        dt_value = dt_value.replace(tzinfo=datetime.timezone.utc)
+        # MongoDB returns naive UTC datetimes; tag as UTC then convert to local
+        dt_value = dt_value.replace(tzinfo=datetime.timezone.utc).astimezone(LOCAL_TZ)
+    else:
+        dt_value = dt_value.astimezone(LOCAL_TZ)
 
-    return dt_value.astimezone(LOCAL_TZ)
+    return dt_value
 
 
 def _normalize_room_number(value: Any) -> int:
@@ -65,7 +73,7 @@ def _normalize_room_number(value: Any) -> int:
 
 def _normalize_room_objects(value: Any) -> list[str]:
     if isinstance(value, str):
-        candidates = value.split(",")
+        candidates = [value]
     elif isinstance(value, (list, tuple, set)):
         candidates = list(value)
     else:
@@ -86,19 +94,21 @@ def _normalize_text(value: Any) -> str:
 
 
 def build_semantic_text(event: MemoryEvent) -> str:
-    video_description = event.video_description or "None"
-    audio_transcript = event.audio_transcript or "None"
-    room_objects = ", ".join(event.room_objects) if event.room_objects else "none"
-
-    return "\n".join(
-        [
-            f"Room: {event.room_name}",
-            f"Time: {event.timestamp.strftime('%Y-%m-%d %I:%M %p')}",
-            f"Video: {video_description}",
-            f"Audio: {audio_transcript}",
-            f"Objects: {room_objects}",
-        ]
-    )
+    sections = [
+        f"Room: {event.room_name}",
+        f"Time: {event.timestamp.strftime('%Y-%m-%d %I:%M %p')}",
+    ]
+    if event.video_description.strip():
+        sections.append(f"Video: {event.video_description.strip()}")
+    if event.audio_transcript.strip():
+        sections.append(f"Audio: {event.audio_transcript.strip()}")
+    if event.room_objects:
+        sections.append(f"Objects: {', '.join(event.room_objects)}")
+    if event.observed_hazards:
+        sections.append(f"Safety observations: {', '.join(event.observed_hazards)}")
+    if event.scene_end_state.strip():
+        sections.append(f"Scene end state: {event.scene_end_state.strip()}")
+    return "\n".join(sections)
 
 
 def memory_event_from_mongo(doc: dict[str, Any]) -> MemoryEvent:
@@ -121,6 +131,13 @@ def memory_event_from_mongo(doc: dict[str, Any]) -> MemoryEvent:
         video_path=_normalize_text(doc.get("video_path")),
         audio_path=_normalize_text(doc.get("audio_path")),
         semantic_text="",
+        danger_candidate=bool(doc.get("danger_candidate", False)),
+        scene_end_state=_normalize_text(doc.get("scene_end_state")),
+        observed_hazards=_normalize_room_objects(doc.get("observed_hazards")),
+        uncertainties=_normalize_room_objects(doc.get("uncertainties")),
+        safety_assessment=doc.get("safety_assessment")
+        if isinstance(doc.get("safety_assessment"), dict)
+        else None,
     )
     event.semantic_text = _normalize_text(doc.get("semantic_text")) or build_semantic_text(event)
     return event
@@ -136,6 +153,11 @@ def new_memory_event(
     screenshot_path: str,
     video_path: str,
     audio_path: str,
+    danger_candidate: bool = False,
+    scene_end_state: str = "",
+    observed_hazards: list[str] | None = None,
+    uncertainties: list[str] | None = None,
+    safety_assessment: dict[str, Any] | None = None,
 ) -> MemoryEvent:
     object_id = ObjectId()
     event = MemoryEvent(
@@ -150,14 +172,18 @@ def new_memory_event(
         video_path=_normalize_text(video_path),
         audio_path=_normalize_text(audio_path),
         semantic_text="",
+        danger_candidate=bool(danger_candidate),
+        scene_end_state=_normalize_text(scene_end_state),
+        observed_hazards=_normalize_room_objects(observed_hazards or []),
+        uncertainties=_normalize_room_objects(uncertainties or []),
+        safety_assessment=safety_assessment,
     )
     event.semantic_text = build_semantic_text(event)
     return event
 
 
 def memory_event_to_mongo(event: MemoryEvent) -> dict[str, Any]:
-    return {
-        "_id": ObjectId(event.event_id),
+    document = {
         "event_id": event.event_id,
         "timestamp": event.timestamp,
         "room_number": event.room_number,
@@ -169,4 +195,12 @@ def memory_event_to_mongo(event: MemoryEvent) -> dict[str, Any]:
         "video_path": event.video_path,
         "audio_path": event.audio_path,
         "semantic_text": event.semantic_text,
+        "danger_candidate": event.danger_candidate,
+        "scene_end_state": event.scene_end_state,
+        "observed_hazards": event.observed_hazards,
+        "uncertainties": event.uncertainties,
+        "safety_assessment": event.safety_assessment,
     }
+    if ObjectId.is_valid(event.event_id):
+        document["_id"] = ObjectId(event.event_id)
+    return document
