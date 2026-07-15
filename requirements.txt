@@ -21,7 +21,6 @@ pyaudio              # Audio recording
 pydub                # Audio format conversion (requires FFmpeg)
 
 # Utilities
-python-dotenv        # Environment variable loading from .env
 pydantic             # Shared response models and canonical event schemas
 Pillow               # Server-side screenshot bounding-box rendering
 

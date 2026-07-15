@@ -1,29 +1,50 @@
+# Environment files and credentials
 .env
+.env.*
+!.env.example
 firebase-service-account*.json
 *firebase-adminsdk*.json
-Storage
-Mobile/.env
+Mobile/google-services.json
+Blue_dream_agents/Tools/credentials.json
+Blue_dream_agents/Tools/token.pickle
+
+# Python caches, environments, and test output
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Node and Expo generated output
 Mobile/node_modules/
 Mobile/.expo/
 Mobile/dist/
 Mobile/android/
 Mobile/ios/
-Mobile/.claude/
-Mobile/AGENTS.md
-Mobile/CLAUDE.md
-Agents\test_data
-trash.py
-Agents/agent_builder.ipynb
-Blue_dream_agents/time-agent-v1.py
-Blue_dream_agents/Tools/token.pickle 
-Blue_dream_agents/Tools/credentials.json 
-Blue_dream_agents/Tools/token.pickle 
-Blue_dream_agents\object-detector(archive).py
-hwo to run.txt
-story.txt
-old shit.txt
-update_db.js
-Proof
-saul_script.md
-References
-Mobile/google-services.json
+
+# Runtime and private local data
+Storage/
+Proof/
+References/
+text_scripts_for_video/
+
+# Local agent, editor, and OS files
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+*~

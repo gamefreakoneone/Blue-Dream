@@ -68,6 +68,16 @@
 - `Committed`
 - `Blocked`
 
+## Phase 0.5: Pre-Rebuild Repository Cleanup
+**Status:** Validated
+
+### Current Baseline
+- Tracked bytecode, accidental files, obsolete experiments, duplicate architecture assets, and the unused root YOLO weight have been removed.
+- Active backend, capture, web, mobile, MongoDB, ChromaDB, alert, and geofence contracts remain unchanged.
+- Home coordinates now come from `GET /geofence/current`; web/mobile navigation fails clearly when they are not configured.
+- Gmail fall delivery reads `FALL_ALERT_RECIPIENT_EMAIL` instead of a source-code literal.
+- Git history and ignored runtime/media data were intentionally left untouched.
+
 ## Phase 0: Roadmap Reset
 **Status:** Validated
 
@@ -133,12 +143,12 @@
   - extract JSON from noisy responses
   - retry once with a stricter JSON-only prompt when structured parsing fails
   - return useful errors without crashing the API
-- Kept Bedrock/Nova modules in the repo for embeddings and voice paths.
+- Kept Bedrock/Nova modules in the repo for optional embeddings and provider fallback.
 
 ### Moving Forward
 - Gemma is now the active text brain of the app.
 - Gemini remains the active provider for full-video understanding and precise image localization/highlighting.
-- Nova still exists in code for embeddings and voice. `/query` routing, synthesis, and current snapshot object checks no longer require Nova.
+- Nova still exists in code for optional embeddings and provider fallback. `/query` routing, synthesis, and current snapshot object checks no longer require Nova.
 - Semantic retrieval still depends on Nova embeddings until Phase 2; if embeddings fail, `/query` returns a graceful insufficient-evidence response instead of crashing.
 
 ### Validation
@@ -340,8 +350,8 @@
 **Status:** In Progress
 
 ### Current Situation
-- Fall alerts are currently hardcoded inside `Capture/camera_feed.py`.
-- The hardcoded fall alert sends email through Gmail.
+- Fall alerts still invoke Gmail directly from `Capture/camera_feed.py`.
+- The recipient is configured through `FALL_ALERT_RECIPIENT_EMAIL`; delivery is skipped when it is unset.
 - A generic alert service is being introduced for patient-actionable safety alerts.
 - A fallen patient should not primarily receive a notification saying they fell.
 - Patient notifications are appropriate only for actionable prompts, such as:
@@ -397,7 +407,7 @@
 - Chat successfully calls the backend `POST /query` over LAN Wi-Fi with a stable `session_id`.
 - Object-localization images from `/storage/` and `/capture/` render correctly after path rewriting.
 - Alert list and detail screens consume the Phase 4 mobile alert API contract.
-- The geofence screen always shows a "Guide me home" button, falling back to hardcoded coordinates when the backend geofence is not configured.
+- Geofence guidance reads the backend configuration and disables navigation with a clear error when home coordinates are unavailable.
 - Push notification setup creates an Android `urgent_alerts` channel, requests permission, acquires an Expo push token on physical devices, and calls `POST /devices/register` with `push_provider: "expo"`.
 - Deep-link scheme `memoria://` is configured; notification taps and cold-start deep links route to `/alerts/{alert_id}`.
 - A dev-only test-notification helper (gated by `__DEV__`) schedules a local notification with `url: "memoria://alerts/test-id"` for quick routing verification.
@@ -407,7 +417,7 @@
 - Complete any remaining mobile polish needed for the hackathon demo.
 - Keep the chat contract stable (`POST /query`, `POST /conversation/reset`, `JeevesResponse`).
 - Keep alert list/detail/ack contracts stable.
-- Keep geofence fallback and "Guide me home" behavior stable.
+- Keep backend-configured geofence and "Guide me home" behavior stable.
 - Switch `push_provider` from `"expo"` to `"fcm"` and configure Firebase when moving from Expo Go to an EAS development build.
 - Remove the `__DEV__` test-notification section before the final demo.
 
@@ -543,6 +553,7 @@
 - `GEMINI_VIDEO_RETRY_BASE_SECONDS=4`
 - `SAFETY_AGENT_ENABLED=true`
 - `SAFETY_ALERT_MIN_SEVERITY=medium`
+- `FALL_ALERT_RECIPIENT_EMAIL=<caretaker-email>`
 - `FIREBASE_PROJECT_ID=<firebase-project-id>`
 - `FIREBASE_CREDENTIALS_PATH=<gitignored-service-account-json-path>`
 - `FIREBASE_ANDROID_PACKAGE=<android-package-name>`

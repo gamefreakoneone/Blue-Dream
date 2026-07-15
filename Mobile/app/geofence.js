@@ -13,9 +13,6 @@ import { COLORS } from '../constants/theme';
 import { getGeofence, recordGeofenceEvent } from '../lib/api';
 import { getOrCreateDeviceId } from '../lib/device';
 
-const FALLBACK_LAT = 34.02489180064899;
-const FALLBACK_LNG = -118.2841318193814;
-
 export default function GeofenceScreen() {
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -52,10 +49,10 @@ export default function GeofenceScreen() {
   const getHomeCoords = () => {
     const lat = config?.home_lat;
     const lng = config?.home_lng;
-    if (typeof lat === 'number' && typeof lng === 'number') {
-      return { lat, lng, source: 'backend' };
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      return { lat, lng };
     }
-    return { lat: FALLBACK_LAT, lng: FALLBACK_LNG, source: 'fallback' };
+    return null;
   };
 
   const openMapsNavigation = (lat, lng) => {
@@ -67,11 +64,20 @@ export default function GeofenceScreen() {
   };
 
   const handleGuideMeHome = () => {
-    const { lat, lng } = getHomeCoords();
+    const homeCoords = getHomeCoords();
+    if (!homeCoords) {
+      setError('Home coordinates are not configured.');
+      return;
+    }
+    const { lat, lng } = homeCoords;
     openMapsNavigation(lat, lng);
   };
 
   const handleLongPress = () => {
+    if (!getHomeCoords()) {
+      setError('Home coordinates are not configured.');
+      return;
+    }
     // Start invisible countdown: create backend alert + schedule notification after delay
     setArming(true);
     countdownRef.current = setTimeout(() => {
@@ -89,12 +95,18 @@ export default function GeofenceScreen() {
 
   const triggerGeofenceExitDemo = async () => {
     try {
+      const homeCoords = getHomeCoords();
+      if (!homeCoords) {
+        throw new Error('Home coordinates are not configured.');
+      }
+      const radiusMeters = Number(config?.radius_meters) || 100;
+      const latitudeOffset = Math.max((radiusMeters * 1.5) / 111320, 0.001);
       const deviceId = await getOrCreateDeviceId();
-      // Report a location slightly offset from USC so it appears as an exit
+      // Report a location beyond the configured radius so it appears as an exit.
       const alert = await recordGeofenceEvent({
         event_type: 'exit',
-        latitude: 34.0200,
-        longitude: -118.2900,
+        latitude: homeCoords.lat + latitudeOffset,
+        longitude: homeCoords.lng,
         device_id: deviceId,
       });
 
@@ -113,13 +125,14 @@ export default function GeofenceScreen() {
 
       console.log('Geofence demo armed. Notification will fire in ~8 seconds.');
     } catch (e) {
+      setError(e.message);
       console.error('Geofence demo trigger failed:', e.message);
     } finally {
       setArming(false);
     }
   };
 
-  const { lat, lng, source } = getHomeCoords();
+  const homeCoords = getHomeCoords();
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -128,33 +141,39 @@ export default function GeofenceScreen() {
       )}
 
       {!loading && error && (
-        <Text style={styles.errorText}>Could not load geofence: {error}</Text>
+        <Text style={styles.errorText}>{error}</Text>
       )}
 
       {!loading && (
         <>
           <Text style={styles.title}>Geofence</Text>
           <Text style={styles.body}>
-            Home is set at{' '}
-            <Text style={styles.coord}>
-              {lat.toFixed(5)}, {lng.toFixed(5)}
-            </Text>
-            {source === 'fallback' && (
-              <Text style={styles.fallbackNote}>
-                {'\n\n'}(Using fallback coordinates because backend geofence is not configured.)
-              </Text>
+            {homeCoords ? (
+              <>
+                Home is set at{' '}
+                <Text style={styles.coord}>
+                  {homeCoords.lat.toFixed(5)}, {homeCoords.lng.toFixed(5)}
+                </Text>
+              </>
+            ) : (
+              <Text style={styles.errorText}>Home coordinates are not configured.</Text>
             )}
             {'\n\n'}
             If you ever need help finding your way back, tap below.
           </Text>
 
           <TouchableOpacity
-            style={[styles.btn, arming && styles.btnArming]}
+            style={[
+              styles.btn,
+              arming && styles.btnArming,
+              !homeCoords && styles.btnDisabled,
+            ]}
             onPress={handleGuideMeHome}
             onLongPress={handleLongPress}
             onPressOut={handlePressOut}
             delayLongPress={1200}
             activeOpacity={0.8}
+            disabled={!homeCoords}
           >
             <Text style={styles.btnText}>Guide me home</Text>
           </TouchableOpacity>
@@ -193,11 +212,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.text,
   },
-  fallbackNote: {
-    fontSize: 13,
-    color: '#94a3b8',
-    fontStyle: 'italic',
-  },
   errorText: {
     fontSize: 14,
     color: '#ef4444',
@@ -212,6 +226,10 @@ const styles = StyleSheet.create({
   },
   btnArming: {
     backgroundColor: '#059669',
+  },
+  btnDisabled: {
+    backgroundColor: '#64748b',
+    opacity: 0.6,
   },
   btnText: {
     color: '#ffffff',

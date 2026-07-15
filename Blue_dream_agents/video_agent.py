@@ -156,12 +156,3 @@ class Video_Agent:
         response = self._generate_video_summary(myfile)
         result = video_results.model_validate_json(response.text)
         return result
-
-
-if __name__ == "__main__":
-    test_agent = Video_Agent()
-    print(
-        test_agent.video_description(
-            r"C:\Users\amogh\Desktop\Blue-Dream\Storage\video_recordings\camera_1\camera_1_2026-01-15_16-31-06.mp4"
-        )
-    )

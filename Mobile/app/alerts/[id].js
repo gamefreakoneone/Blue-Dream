@@ -11,11 +11,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { COLORS } from '../../constants/theme';
-import { getAlert, ackAlert, rewriteImagePath } from '../../lib/api';
-
-// Demo coordinates for USC (configured as "home")
-const HOME_LAT = 34.02489180064899;
-const HOME_LNG = -118.2841318193814;
+import { getAlert, ackAlert, getGeofence, rewriteImagePath } from '../../lib/api';
 
 export default function AlertDetailScreen() {
   const { id } = useLocalSearchParams();
@@ -59,9 +55,15 @@ export default function AlertDetailScreen() {
     if (!id) return;
     setAckLoading(true);
     try {
+      const geofence = await getGeofence();
+      const homeLat = geofence?.home_lat;
+      const homeLng = geofence?.home_lng;
+      if (!Number.isFinite(homeLat) || !Number.isFinite(homeLng)) {
+        throw new Error('Home coordinates are not configured.');
+      }
       const updated = await ackAlert(id, 'returning');
       setAlert(updated);
-      const url = `https://www.google.com/maps/dir/?api=1&destination=${HOME_LAT},${HOME_LNG}`;
+      const url = `https://www.google.com/maps/dir/?api=1&destination=${homeLat},${homeLng}`;
       Linking.openURL(url).catch((e) => {
         console.error('Failed to open maps:', e);
       });

@@ -35,7 +35,7 @@ Add these to your backend `.env`:
 
 ```env
 FIREBASE_PROJECT_ID=<firebase-project-id>
-FIREBASE_CREDENTIALS_PATH=C:\Users\amogh\Desktop\Blue-Dream\firebase-service-account.json
+FIREBASE_CREDENTIALS_PATH=path/to/firebase-service-account.json
 FIREBASE_ANDROID_PACKAGE=com.amogh.memoria
 ```
 

@@ -59,11 +59,16 @@ def send_fall_alert(
             print(f"Error saving fall screenshot: {e}")
             screenshot_path = None
 
-    if gmail_agent:
+    recipient = (os.getenv("FALL_ALERT_RECIPIENT_EMAIL") or "").strip()
+    if gmail_agent and not recipient:
+        print(
+            "Fall email skipped: configure FALL_ALERT_RECIPIENT_EMAIL to enable delivery."
+        )
+    elif gmail_agent:
         try:
             print(f"Sending email alert for {room_name}...")
             gmail_agent.send_alert_email(
-                to="amogh@outlook.com",  # REPLACE WITH ACTUAL EMAIL
+                to=recipient,
                 subject=f"URGENT: Fall Detected in {room_name}",
                 alert_type="FALL DETECTED",
                 location=room_name,

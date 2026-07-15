@@ -152,7 +152,7 @@ Never commit credentials, tokens, service-account files, or local auth artifacts
 
 ## Configuration
 
-Create a `.env` file in the repository root. The current hackathon runtime uses Gemma/Ollama by default:
+Copy `.env.example` to `.env` in the repository root and fill in the providers you use. The current hackathon runtime uses Gemma/Ollama by default:
 
 ```ini
 # Required core runtime keys
@@ -186,6 +186,7 @@ GEMINI_SPATIAL_MODEL=gemini-2.5-flash
 # Safety and alert prototype
 SAFETY_AGENT_ENABLED=true
 SAFETY_ALERT_MIN_SEVERITY=medium
+FALL_ALERT_RECIPIENT_EMAIL=<caretaker-email>
 
 # Optional Firebase push configuration
 FIREBASE_PROJECT_ID=<firebase-project-id>
@@ -206,7 +207,7 @@ EXPO_PUBLIC_API_BASE_URL=http://<your-lan-ip>:8000
 
 Metro reads this at startup, so restart `npx expo start` after changing it.
 
-Optional legacy Bedrock/Nova settings still exist for older paths such as Bedrock embeddings and voice experiments. They are not required for the primary Gemma recall, routing, synthesis, current-image object check, or safety decision flow.
+Optional legacy Bedrock/Nova settings still exist for the Bedrock provider and embedding fallback. They are not required for the primary Gemma recall, routing, synthesis, current-image object check, or safety decision flow.
 
 ## Running the System
 
@@ -355,9 +356,10 @@ The first geofence implementation is intentionally prototype-simple: the backend
 - Expo Go on Android SDK 54 does not support remote push notifications; use an EAS development build for real FCM testing.
 - `Capture/camera_feed.py` currently uses hardcoded camera indices `[1, 2]`.
 - Room assumptions are currently fixed to `0 = Bedroom` and `1 = Living Room`.
-- Gmail alerts require local credential artifacts under `Blue_dream_agents/Tools/`.
+- Gmail alerts require local credential artifacts under `Blue_dream_agents/Tools/` and `FALL_ALERT_RECIPIENT_EMAIL` in `.env`.
 - Chroma may reset local persisted state if it detects an invalid or mismatched collection layout.
 - `Storage/` contains runtime media and should be treated as generated data, not source code.
+- `Storage/`, `Proof/`, and local credential files are Git-ignored, but `/storage` is still served by the development backend. Keep the backend on a trusted local network until authentication and media access controls are added.
 
 ## Roadmap Snapshot
 
@@ -427,5 +429,3 @@ The goal of Memoria is not to replace caregivers. It is to give patients more in
 
 - Fallen detection accuracy: 94%
 - Not fallen detection accuracy: 87%
-
-Legacy note: [`Blue_dream_agents/sam3_api.py`](Blue_dream_agents/sam3_api.py) is still in the repository, but it is not part of the active object-highlighting path.

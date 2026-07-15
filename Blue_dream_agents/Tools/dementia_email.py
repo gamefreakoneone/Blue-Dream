@@ -533,13 +533,18 @@ def example_callback(message: Dict):
 def main():
     """Example usage of the Gmail Agent"""
 
+    recipient = (os.getenv("FALL_ALERT_RECIPIENT_EMAIL") or "").strip()
+    if not recipient:
+        print("Set FALL_ALERT_RECIPIENT_EMAIL before running the Gmail example.")
+        return
+
     print("🚀 Initializing Gmail Agent...")
     agent = GmailAgent()
 
     # Example 1: Send an email
     print("\n📤 SENDING EMAIL EXAMPLE:")
     result = agent.send_email(
-        to="amogh@outlook.com",
+        to=recipient,
         subject="Test Email from Gmail Agent",
         body="""
         <h2>Hello!</h2>

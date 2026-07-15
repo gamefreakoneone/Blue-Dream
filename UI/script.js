@@ -169,8 +169,8 @@ async function loadGeofence() {
         renderGeofence(currentGeofence);
         setEmergencyError('');
     } catch (error) {
-        currentGeofence = getFallbackGeofence();
-        renderGeofence(currentGeofence, true);
+        currentGeofence = null;
+        renderGeofence(null);
         setEmergencyError(`Could not load geofence from backend: ${error.message}`);
     }
 }
@@ -192,11 +192,19 @@ async function loadPatientAlerts(selectFirst = false) {
     }
 }
 
-function renderGeofence(geofence, isFallback = false) {
-    const lat = Number(geofence.home_lat);
-    const lng = Number(geofence.home_lng);
-    const radius = Number(geofence.radius_meters);
-    const source = isFallback ? 'local fallback' : (geofence.source || 'backend');
+function renderGeofence(geofence) {
+    const lat = geofence?.home_lat;
+    const lng = geofence?.home_lng;
+    const radius = Number(geofence?.radius_meters);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        geofenceStatus.classList.remove('muted');
+        geofenceStatus.classList.add('danger');
+        geofenceStatus.textContent = 'Home coordinates are not configured.';
+        return;
+    }
+
+    const source = geofence.source || 'backend';
 
     geofenceStatus.classList.remove('muted', 'danger');
     geofenceStatus.innerHTML = `
@@ -302,12 +310,19 @@ async function simulateSafeZoneExit() {
     setEmergencyError('');
 
     try {
+        const homeLat = currentGeofence?.home_lat;
+        const homeLng = currentGeofence?.home_lng;
+        if (!Number.isFinite(homeLat) || !Number.isFinite(homeLng)) {
+            throw new Error('Home coordinates are not configured.');
+        }
+        const radiusMeters = Number(currentGeofence.radius_meters) || 100;
+        const latitudeOffset = Math.max((radiusMeters * 1.5) / 111320, 0.001);
         const alert = await fetchJson(GEOFENCE_EVENTS_URL, {
             method: 'POST',
             body: JSON.stringify({
                 event_type: 'exit',
-                latitude: 34.0200,
-                longitude: -118.2900,
+                latitude: homeLat + latitudeOffset,
+                longitude: homeLng,
                 device_id: 'web-demo'
             })
         });
@@ -340,9 +355,8 @@ async function acknowledgeSelectedAlert(action) {
 }
 
 function openMapsHome() {
-    const geofence = currentGeofence || getFallbackGeofence();
-    const lat = Number(geofence.home_lat);
-    const lng = Number(geofence.home_lng);
+    const lat = currentGeofence?.home_lat;
+    const lng = currentGeofence?.home_lng;
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
         setEmergencyError('Home coordinates are not available.');
         return;
@@ -353,15 +367,6 @@ function openMapsHome() {
 function setEmergencyError(message) {
     if (!emergencyError) return;
     emergencyError.textContent = message || '';
-}
-
-function getFallbackGeofence() {
-    return {
-        home_lat: 34.034992564747604,
-        home_lng: -118.28252676933066,
-        radius_meters: 100,
-        source: 'fallback'
-    };
 }
 
 function formatCoord(value) {
