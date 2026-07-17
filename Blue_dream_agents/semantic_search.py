@@ -380,7 +380,10 @@ async def run_semantic_retrieval(query: str) -> SemanticSearchResult:
         logger.exception("Semantic retrieval failed.")
         return SemanticSearchResult(
             success=False,
-            text=f"I'm sorry, I had trouble searching your memories: {exc}",
+            text=(
+                "I'm having a little trouble remembering right now. "
+                "Please try again in a moment."
+            ),
             query=query,
             match_count=0,
             top_k=top_k,
@@ -459,7 +462,10 @@ async def run_semantic_query(query: str) -> SemanticSearchResult:
         logger.exception("Semantic search failed.")
         return SemanticSearchResult(
             success=False,
-            text=f"I'm sorry, I had trouble searching your memories: {exc}",
+            text=(
+                "I'm having a little trouble remembering right now. "
+                "Please try again in a moment."
+            ),
             query=query,
             match_count=0,
             top_k=top_k,

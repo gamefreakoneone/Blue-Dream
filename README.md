@@ -175,12 +175,14 @@ SEMANTIC_SEARCH_TOP_K=5
 
 # Database
 MONGODB_URI=mongodb://localhost:27017
+TIMEZONE=America/Los_Angeles
 
 # Gemini perception support
 GEMINI_VIDEO_MODEL=gemini-3-flash-preview
 GEMINI_VIDEO_FALLBACK_MODELS=gemini-2.5-flash
 GEMINI_VIDEO_MAX_RETRIES=3
 GEMINI_VIDEO_RETRY_BASE_SECONDS=4
+VIDEO_ANALYSIS_TIMEOUT_SECONDS=300
 GEMINI_SPATIAL_MODEL=gemini-2.5-flash
 
 # Safety and alert prototype

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 from pathlib import Path
@@ -11,7 +12,7 @@ from pymongo import ReturnDocument
 
 try:
     from .db_client import (
-        ensure_alert_indexes,
+        ensure_alert_indexes as ensure_alert_indexes_in_db,
         get_devices_collection,
         get_geofence_collection,
         get_safety_alerts_collection,
@@ -23,7 +24,7 @@ try:
     from .timezone_utils import now_local
 except ImportError:
     from db_client import (
-        ensure_alert_indexes,
+        ensure_alert_indexes as ensure_alert_indexes_in_db,
         get_devices_collection,
         get_geofence_collection,
         get_safety_alerts_collection,
@@ -45,15 +46,6 @@ SEVERITY_RANK = {
     "critical": 4,
 }
 
-CONTROLLER_TERMS = (
-    "video game controller",
-    "game controller",
-    "xbox controller",
-    "playstation controller",
-    "controller",
-    "joystick",
-    "gamepad",
-)
 KITCHEN_HAZARD_TERMS = (
     "stove",
     "burner",
@@ -65,6 +57,23 @@ KITCHEN_HAZARD_TERMS = (
     "kettle",
     "boiling",
 )
+
+_alert_indexes_ready = False
+_alert_indexes_lock = asyncio.Lock()
+
+
+async def initialize_alert_indexes() -> None:
+    """Create alert indexes once in this process, retrying after failures."""
+
+    global _alert_indexes_ready
+    if _alert_indexes_ready:
+        return
+
+    async with _alert_indexes_lock:
+        if _alert_indexes_ready:
+            return
+        await ensure_alert_indexes_in_db()
+        _alert_indexes_ready = True
 
 
 def _severity_allows_alert(severity: str, min_severity: str) -> bool:
@@ -114,9 +123,6 @@ def choose_highlight_target(
     if not text:
         return None
 
-    if any(term in text for term in CONTROLLER_TERMS):
-        return "video game controller"
-
     for term in KITCHEN_HAZARD_TERMS:
         if term in text:
             if term == "boiling":
@@ -126,8 +132,6 @@ def choose_highlight_target(
             return term
 
     hazard_type = assessment.hazard_type.lower()
-    if "controller" in hazard_type:
-        return "video game controller"
     if "cooking" in hazard_type or "stove" in hazard_type:
         return "stove"
     if "smoke" in hazard_type:
@@ -213,7 +217,7 @@ async def register_device(
     push_token: str,
     role: str = "patient",
 ) -> dict[str, Any]:
-    await ensure_alert_indexes()
+    await initialize_alert_indexes()
     now = now_local()
     document = {
         "device_id": device_id,
@@ -236,7 +240,7 @@ async def register_device(
 
 
 async def list_patient_alerts(status: Optional[str] = "open") -> list[dict[str, Any]]:
-    await ensure_alert_indexes()
+    await initialize_alert_indexes()
     query: dict[str, Any] = {"target_role": "patient"}
     if status and status != "all":
         query["status"] = status
@@ -250,13 +254,13 @@ async def list_patient_alerts(status: Optional[str] = "open") -> list[dict[str, 
 
 
 async def get_alert(alert_id: str) -> Optional[dict[str, Any]]:
-    await ensure_alert_indexes()
+    await initialize_alert_indexes()
     doc = await get_safety_alerts_collection().find_one({"alert_id": alert_id})
     return serialize_alert(doc) if doc else None
 
 
 async def acknowledge_alert(alert_id: str, action: str) -> Optional[dict[str, Any]]:
-    await ensure_alert_indexes()
+    await initialize_alert_indexes()
     now = now_local()
     result = await get_safety_alerts_collection().find_one_and_update(
         {"alert_id": alert_id},
@@ -318,7 +322,7 @@ async def create_alert_for_safety_assessment(
     if not _severity_allows_alert(assessment.severity, settings.safety_alert_min_severity):
         return None
 
-    await ensure_alert_indexes()
+    await initialize_alert_indexes()
     alert = await build_alert_document(event, assessment)
     await get_safety_alerts_collection().insert_one(alert)
     try:
@@ -415,7 +419,7 @@ async def _send_fcm_message(push_token: str, alert: dict[str, Any]) -> dict[str,
 
 
 async def deliver_patient_alert(alert: dict[str, Any]) -> dict[str, Any]:
-    await ensure_alert_indexes()
+    await initialize_alert_indexes()
     cursor = get_devices_collection().find(
         {
             "role": "patient",
@@ -453,7 +457,7 @@ async def deliver_patient_alert(alert: dict[str, Any]) -> dict[str, Any]:
 
 
 async def get_current_geofence() -> dict[str, Any]:
-    await ensure_alert_indexes()
+    await initialize_alert_indexes()
     settings = get_provider_settings()
     doc = await get_geofence_collection().find_one({"config_id": "default"})
     if doc:
@@ -470,7 +474,7 @@ async def get_current_geofence() -> dict[str, Any]:
 async def update_current_geofence(
     *, home_lat: float, home_lng: float, radius_meters: float
 ) -> dict[str, Any]:
-    await ensure_alert_indexes()
+    await initialize_alert_indexes()
     now = now_local()
     doc = {
         "config_id": "default",
@@ -494,7 +498,7 @@ async def record_geofence_event(
     longitude: float,
     device_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    await ensure_alert_indexes()
+    await initialize_alert_indexes()
     now = now_local()
     alert_id = str(ObjectId())
     status = "open" if event_type == "exit" else "resolved"

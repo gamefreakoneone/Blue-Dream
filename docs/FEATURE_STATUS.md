@@ -6,7 +6,7 @@ Two hard deadlines govern sequencing: **Qwen Cloud submission July 20, 2026, 2pm
 
 | Spec | Feature | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 0001 | Cleanup And Hardening | Not started | `docs/specs/0001-cleanup-and-hardening/status.md` | Dead-code purge, pinned deps, exception-leak fixes, video timeout, lifespan migration, pytest scaffold. |
+| 0001 | Cleanup And Hardening | Completed | `docs/specs/0001-cleanup-and-hardening/status.md` | 23 offline tests pass; pinned deps, safe errors, timeout, lifespan, alert init, and cleanup completed in this commit. |
 | 0002 | Media Path Service | Not started | `docs/specs/0002-media-path-service/status.md` | Relative POSIX paths in Mongo, URL paths in API responses, read-time normalization of legacy paths. |
 | 0003 | LLM Provider Layer | Not started | `docs/specs/0003-llm-provider-layer/status.md` | Single OpenAI-protocol client; per-provider Chroma collections. Validated offline (mocked pytest); first live validation happens in 0005 on Qwen. |
 | 0004 | Capture Pipeline Fix | Not started | `docs/specs/0004-capture-pipeline-fix/status.md` | camera_feed restructure, weights path, camera env config, fall alerts through alert service. |

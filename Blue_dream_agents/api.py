@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -20,13 +22,15 @@ try:
         acknowledge_alert,
         get_alert,
         get_current_geofence,
+        initialize_alert_indexes,
         list_patient_alerts,
         record_geofence_event,
         register_device,
         update_current_geofence,
     )
-    from .db_client import ensure_alert_indexes, ensure_events_indexes
+    from .db_client import close_mongo_client, ensure_events_indexes
     from .jeeves import run_single_query
+    from .llm.ollama_runtime import close_http_client
 except ImportError:
     from conversation_memory import (
         append_conversation_turn,
@@ -37,15 +41,18 @@ except ImportError:
         acknowledge_alert,
         get_alert,
         get_current_geofence,
+        initialize_alert_indexes,
         list_patient_alerts,
         record_geofence_event,
         register_device,
         update_current_geofence,
     )
-    from db_client import ensure_alert_indexes, ensure_events_indexes
+    from db_client import close_mongo_client, ensure_events_indexes
     from jeeves import run_single_query
+    from llm.ollama_runtime import close_http_client
 
 logger = logging.getLogger(__name__)
+GENERIC_ERROR_DETAIL = "Something went wrong. Please try again in a moment."
 
 # Configure logging to show INFO level for our modules
 logging.basicConfig(
@@ -54,7 +61,24 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-app = FastAPI(title="Jeeves API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        await ensure_events_indexes()
+        await initialize_alert_indexes()
+    except Exception as exc:
+        logger.warning("MongoDB index setup skipped or failed: %s", exc)
+
+    try:
+        yield
+    finally:
+        try:
+            await close_http_client()
+        finally:
+            await close_mongo_client()
+
+
+app = FastAPI(title="Jeeves API", lifespan=lifespan)
 
 # Allow CORS for development convenience
 app.add_middleware(
@@ -64,15 +88,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def startup_indexes():
-    try:
-        await ensure_events_indexes()
-        await ensure_alert_indexes()
-    except Exception as exc:
-        logger.warning("MongoDB index setup skipped or failed: %s", exc)
 
 
 class QueryRequest(BaseModel):
@@ -135,7 +150,7 @@ async def query_jeeves(request: QueryRequest):
         return response.model_dump()
     except Exception as e:
         logger.exception("[API] Query failed: '%s'", request.query[:100])
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 
 @app.post("/conversation/reset")
@@ -160,7 +175,7 @@ async def register_patient_device(request: DeviceRegistrationRequest):
         )
     except Exception as exc:
         logger.exception("Device registration failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 
 @app.get("/alerts/patient")
@@ -169,7 +184,7 @@ async def get_patient_alerts(status: str = "open"):
         return {"alerts": await list_patient_alerts(status=status)}
     except Exception as exc:
         logger.exception("Patient alert list failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 
 @app.get("/alerts/{alert_id}")
@@ -183,7 +198,7 @@ async def get_alert_detail(alert_id: str):
         raise
     except Exception as exc:
         logger.exception("Alert detail failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 
 @app.post("/alerts/{alert_id}/ack")
@@ -197,7 +212,7 @@ async def ack_alert(alert_id: str, request: AlertAckRequest):
         raise
     except Exception as exc:
         logger.exception("Alert acknowledgement failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 
 @app.get("/geofence/current")
@@ -206,7 +221,7 @@ async def get_geofence_settings():
         return await get_current_geofence()
     except Exception as exc:
         logger.exception("Geofence read failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 
 @app.put("/geofence/current")
@@ -221,7 +236,7 @@ async def set_geofence_settings(request: GeofenceSettingsRequest):
         )
     except Exception as exc:
         logger.exception("Geofence update failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 
 @app.post("/geofence/events")
@@ -235,7 +250,7 @@ async def create_geofence_event(request: GeofenceEventRequest):
         )
     except Exception as exc:
         logger.exception("Geofence event failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 
 # Mount the Capture directory to serve images

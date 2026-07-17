@@ -11,6 +11,10 @@ except ImportError:
 
 load_project_env()
 
+VIDEO_ANALYSIS_TIMEOUT_SECONDS = float(
+    os.getenv("VIDEO_ANALYSIS_TIMEOUT_SECONDS", "300")
+)
+
 
 VIDEO_ANALYSIS_PROMPT = """
 You are a dementia assistance agent. Your job is to monitor the actions of the patient in the video and describe their actions in detail. If only one unlabeled person is visible, refer to that person as the patient. If another person is explicitly visible, preserve that separate identity. If the patient is interacting with the environment,
@@ -106,8 +110,14 @@ class Video_Agent:
 
     def _upload_video(self, video_path):
         myfile = self.client.files.upload(file=video_path)
+        deadline = time.monotonic() + VIDEO_ANALYSIS_TIMEOUT_SECONDS
         print("Processing video...")
         while myfile.state == "PROCESSING":
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    "Gemini file processing exceeded "
+                    f"{VIDEO_ANALYSIS_TIMEOUT_SECONDS:g}s"
+                )
             print(".", end="", flush=True)
             time.sleep(1)
             myfile = self.client.files.get(name=myfile.name)

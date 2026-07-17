@@ -496,7 +496,10 @@ async def search_for_object(user_query: str) -> SearchResult:
         logger.exception("Object search failed.")
         return SearchResult(
             found=False,
-            description=f"System error during search: {exc}",
+            description=(
+                "I'm having a little trouble remembering right now. "
+                "Please try again in a moment."
+            ),
             evidence_type="not_found",
             highlight_status="not_attempted",
         )

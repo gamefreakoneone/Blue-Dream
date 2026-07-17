@@ -20,7 +20,7 @@ try:
     from .llm.strands_runtime import invoke_structured, invoke_text
     from .object_detector import run_object_query
     from .prompt_budget import compact_json_records, truncate_text
-    from .semantic_search import SemanticSearchResult, run_semantic_query, run_semantic_retrieval
+    from .semantic_search import SemanticSearchResult, run_semantic_retrieval
     from .time_agent import TimeWindowContext, get_time_window_context, run_time_query
 except ImportError:
     from llm.model_registry import get_model_registry
@@ -32,7 +32,7 @@ except ImportError:
     from llm.strands_runtime import invoke_structured, invoke_text
     from object_detector import run_object_query
     from prompt_budget import compact_json_records, truncate_text
-    from semantic_search import SemanticSearchResult, run_semantic_query, run_semantic_retrieval
+    from semantic_search import SemanticSearchResult, run_semantic_retrieval
     from time_agent import TimeWindowContext, get_time_window_context, run_time_query
 
 
@@ -313,7 +313,6 @@ async def _synthesize_semantic_answer(
     query: str,
     semantic_result: SemanticSearchResult,
     *,
-    decision: SemanticDecision,
     time_window: Optional[TimeWindowContext] = None,
 ) -> str:
     registry = get_model_registry()
@@ -429,7 +428,6 @@ async def _handle_semantic_query(query: str) -> JeevesResponse:
     final_text = await _synthesize_semantic_answer(
         query,
         semantic_result,
-        decision=decision,
         time_window=time_window,
     )
     return _build_activity_response(final_text, response_data)
@@ -562,7 +560,10 @@ async def run_single_query(
         logger.exception("[ERROR] Query failed: '%s'", query)
         return JeevesResponse(
             response_type="general",
-            text=f"I encountered an error: {exc}",
+            text=(
+                "I'm having a little trouble remembering right now. "
+                "Please try again in a moment."
+            ),
             image_path=None,
             data=None,
         )

@@ -3,11 +3,20 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
+import logging
 import re
 from datetime import timedelta
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+
+logger = logging.getLogger(__name__)
+
+PATIENT_SAFE_ERROR_MESSAGE = (
+    "I'm having a little trouble remembering right now. "
+    "Please try again in a moment."
+)
 
 try:
     from .db_client import get_mongo_client, close_mongo_client
@@ -379,12 +388,13 @@ async def get_time_window_context(
             events=serialized_events,
         )
     except Exception as exc:
+        logger.exception("Nearby time-window lookup failed")
         return TimeWindowContext(
             success=False,
             event_count=0,
             time_range="",
             room_name=room_name,
-            summary=f"I'm sorry, I had trouble looking up nearby events: {exc}",
+            summary=PATIENT_SAFE_ERROR_MESSAGE,
             transcripts=[],
             events=[],
         )
@@ -411,11 +421,12 @@ async def get_activity_history(time_range: str) -> TimelineResult:
             summary=summary,
         )
     except Exception as exc:
+        logger.exception("Activity-history lookup failed")
         return TimelineResult(
             success=False,
             event_count=0,
             time_range=time_range,
-            summary=f"I'm sorry, I had trouble looking up your activities: {exc}",
+            summary=PATIENT_SAFE_ERROR_MESSAGE,
         )
 
 
@@ -457,11 +468,12 @@ async def get_room_activity(
             summary=summary,
         )
     except Exception as exc:
+        logger.exception("Room-activity lookup failed")
         return TimelineResult(
             success=False,
             event_count=0,
             time_range=time_range,
-            summary=f"I'm sorry, I had trouble looking up room activity: {exc}",
+            summary=PATIENT_SAFE_ERROR_MESSAGE,
         )
 
 
@@ -538,12 +550,13 @@ async def get_recent_transcripts(
             summary=summary,
         )
     except Exception as exc:
+        logger.exception("Transcript lookup failed")
         return TranscriptResult(
             success=False,
             transcript_count=0,
             time_range=time_range,
             transcripts=[],
-            summary=f"I'm sorry, I had trouble looking that up: {exc}",
+            summary=PATIENT_SAFE_ERROR_MESSAGE,
         )
 
 
@@ -636,11 +649,12 @@ async def check_activity(activity: str, hours: int = 24) -> ActivityCheckResult:
             summary=summary,
         )
     except Exception as exc:
+        logger.exception("Activity check failed")
         return ActivityCheckResult(
             found=False,
             keyword=activity,
             confidence="low",
-            summary=f"I'm sorry, I had trouble checking for that activity: {exc}",
+            summary=PATIENT_SAFE_ERROR_MESSAGE,
         )
 
 
@@ -722,9 +736,10 @@ async def run_time_query(query: str) -> TimeResult:
         )
         return TimeResult(response_type="general", text=text, data={})
     except Exception as exc:
+        logger.exception("Time query handling failed")
         return TimeResult(
             response_type="general",
-            text=f"I'm sorry, I had trouble answering that: {exc}",
+            text=PATIENT_SAFE_ERROR_MESSAGE,
             data={},
         )
 

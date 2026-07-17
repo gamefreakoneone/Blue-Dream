@@ -3,31 +3,35 @@
 # conda install pytorch torchvision -c pytorch -c nvidia
 
 # Computer Vision & AI
-ultralytics          # YOLO11 model for human detection
-opencv-python        # Camera capture and video processing
+ultralytics==8.4.99          # YOLO11 model for human detection
+opencv-python==5.0.0.93      # Camera capture and video processing
 
 # AI APIs
-google-genai         # Gemini API for video analysis
-google-auth          # Firebase Cloud Messaging HTTP v1 service-account auth
-google-auth-oauthlib # Gmail OAuth flow
-google-api-python-client # Gmail API client
-openai               # OpenAI API for transcription and image editing
-httpx                # Local Ollama HTTP runtime client
-strands-agents       # Strands runtime over native Amazon Bedrock
-boto3                # Native Amazon Bedrock client/auth stack
+google-genai==2.12.1               # Gemini API for video analysis
+google-auth==2.55.2                 # Firebase Cloud Messaging HTTP v1 service-account auth
+google-auth-oauthlib==1.4.0         # Gmail OAuth flow
+google-api-python-client==2.198.0   # Gmail API client
+openai==2.46.0                      # OpenAI API for transcription and image editing
+httpx==0.28.1                       # Local Ollama HTTP runtime client
+strands-agents==1.48.0              # Strands runtime over native Amazon Bedrock
+boto3==1.43.51                      # Native Amazon Bedrock client/auth stack
 
 # Audio Processing
-pyaudio              # Audio recording
-pydub                # Audio format conversion (requires FFmpeg)
+PyAudio==0.2.14       # Audio recording
+pydub==0.25.1        # Audio format conversion (requires FFmpeg)
 
 # Utilities
-pydantic             # Shared response models and canonical event schemas
-Pillow               # Server-side screenshot bounding-box rendering
+pydantic==2.13.4      # Shared response models and canonical event schemas
+Pillow==11.1.0        # Server-side screenshot bounding-box rendering
+tzdata==2026.3        # IANA timezone database fallback for Windows
 
 # Web Server
-fastapi              # Backend API
-uvicorn              # ASGI Server
+fastapi==0.139.2      # Backend API
+uvicorn==0.51.0       # ASGI Server
 
 # Database
-motor                # Async MongoDB driver
-chromadb             # Persistent vector index for semantic memory search
+motor==3.7.1          # Async MongoDB driver
+chromadb==1.5.9       # Persistent vector index for semantic memory search
+
+# Test
+pytest==9.1.1
