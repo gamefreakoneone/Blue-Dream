@@ -253,9 +253,9 @@ def _save_highlighted_image(
     image_path: str,
     object_name: str,
     bounding_box: GeminiBoundingBox,
-    output_dir: str,
+    output_dir: str | Path,
 ) -> str:
-    output_path = Path(output_dir).resolve()
+    output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
     with Image.open(image_path) as image:
@@ -330,7 +330,7 @@ async def render_highlighted_image(
     image_path: str,
     object_name: str,
     bounding_box: GeminiBoundingBox,
-    output_dir: str = "Storage/highlighted",
+    output_dir: str | Path = "Storage/highlighted",
 ) -> Optional[str]:
     try:
         return await asyncio.to_thread(
@@ -353,7 +353,7 @@ async def highlight_object_with_gemini(
     *,
     matched_object: Optional[str] = None,
     grounding_text: Optional[str] = None,
-    output_dir: str = "Storage/highlighted",
+    output_dir: str | Path = "Storage/highlighted",
 ) -> Optional[str]:
     result = await localize_object_with_gemini(
         image_path=image_path,

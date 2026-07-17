@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -12,12 +11,14 @@ try:
     from .llm.prompt_context import with_patient_answer_context
     from .llm.settings import get_provider_settings
     from .llm.strands_runtime import invoke_multimodal_structured, invoke_structured
+    from .media_paths import normalize_stored_path, to_fs_path
     from .memory_schema import MemoryEvent
 except ImportError:
     from llm.model_registry import get_model_registry
     from llm.prompt_context import with_patient_answer_context
     from llm.settings import get_provider_settings
     from llm.strands_runtime import invoke_multimodal_structured, invoke_structured
+    from media_paths import normalize_stored_path, to_fs_path
     from memory_schema import MemoryEvent
 
 
@@ -137,13 +138,13 @@ async def assess_event_safety(event: MemoryEvent) -> SafetyAssessment:
         "severity='none' when the evidence is only uncertain."
     )
 
-    screenshot_path = event.screenshot_path
+    screenshot_path = to_fs_path(normalize_stored_path(event.screenshot_path))
     try:
-        if screenshot_path and os.path.exists(screenshot_path):
+        if screenshot_path is not None and screenshot_path.exists():
             text_prompt = json.dumps(prompt, default=str, indent=2)
             return await invoke_multimodal_structured(
                 text_prompt=text_prompt,
-                image_path=screenshot_path,
+                image_path=str(screenshot_path),
                 output_model=SafetyAssessment,
                 system_prompt=_system_prompt(),
                 model_id=registry.vision,

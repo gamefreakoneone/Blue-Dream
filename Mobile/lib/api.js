@@ -6,25 +6,9 @@ function getUrl(path) {
 
 export function rewriteImagePath(imagePath) {
   if (!imagePath) return null;
-  let normalized = imagePath.replace(/\\/g, '/');
-
-  const lower = normalized.toLowerCase();
-  if (lower.includes('/capture/')) {
-    const parts = normalized.split(/\/capture\//i);
-    if (parts.length > 1) {
-      normalized = '/capture/' + parts[1];
-    }
-  } else if (lower.includes('/storage/')) {
-    const parts = normalized.split(/\/storage\//i);
-    if (parts.length > 1) {
-      normalized = '/storage/' + parts[1];
-    }
-  }
-
-  // If it already starts with http, leave it alone
-  if (/^https?:\/\//i.test(normalized)) return normalized;
-
-  return `${API_BASE_URL}${normalized}`;
+  if (/^https?:\/\//i.test(imagePath)) return imagePath;
+  if (imagePath.startsWith('/')) return `${API_BASE_URL}${imagePath}`;
+  return imagePath;
 }
 
 export async function queryAssistant({ query, session_id }) {

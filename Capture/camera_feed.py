@@ -10,6 +10,7 @@ from video_processing_queue import VideoProcessingQueue
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from Blue_dream_agents.timezone_utils import now_local
+from Blue_dream_agents.media_paths import to_stored_path
 from Blue_dream_agents.Tools.dementia_email import GmailAgent
 
 # Fall detection class IDs from your custom YOLO model
@@ -312,9 +313,9 @@ def camera_feed():
 
                             # Add video task to processing queue
                             processing_queue.add_task(
-                                video_path=current_video_filename[idx],
-                                audio_path=current_audio_filename[idx],
-                                screenshot_path=screenshot_path or "",
+                                video_path=to_stored_path(current_video_filename[idx]) or "",
+                                audio_path=to_stored_path(current_audio_filename[idx]) or "",
+                                screenshot_path=to_stored_path(screenshot_path) or "",
                                 room_number=CAMERA_ROOM_MAPPING.get(idx, idx),
                                 timestamp=recording_start_timestamp[idx],
                             )
@@ -443,9 +444,9 @@ def camera_feed():
                 )
                 # Add active recording to queue before shutdown
                 processing_queue.add_task(
-                    video_path=current_video_filename[idx],
-                    audio_path=current_audio_filename.get(idx, ""),
-                    screenshot_path=screenshot_path or "",
+                    video_path=to_stored_path(current_video_filename[idx]) or "",
+                    audio_path=to_stored_path(current_audio_filename.get(idx, "")) or "",
+                    screenshot_path=to_stored_path(screenshot_path) or "",
                     room_number=CAMERA_ROOM_MAPPING.get(idx, idx),
                     timestamp=recording_start_timestamp.get(idx, now_local()),
                 )

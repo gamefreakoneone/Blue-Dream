@@ -18,6 +18,7 @@ try:
         with_patient_cctv_context,
     )
     from .llm.strands_runtime import invoke_structured, invoke_text
+    from .media_paths import to_url_path
     from .object_detector import run_object_query
     from .prompt_budget import compact_json_records, truncate_text
     from .semantic_search import SemanticSearchResult, run_semantic_retrieval
@@ -30,6 +31,7 @@ except ImportError:
         with_patient_cctv_context,
     )
     from llm.strands_runtime import invoke_structured, invoke_text
+    from media_paths import to_url_path
     from object_detector import run_object_query
     from prompt_budget import compact_json_records, truncate_text
     from semantic_search import SemanticSearchResult, run_semantic_retrieval
@@ -499,15 +501,18 @@ async def run_single_query(
                 result.highlighted_image_path,
             )
             response_text = (result.description or "").strip() or "I couldn't find that object."
+            image_url = to_url_path(result.highlighted_image_path)
+            object_data = result.model_dump(mode="json")
+            object_data["highlighted_image_path"] = image_url
             return JeevesResponse(
                 response_type="search_result",
                 text=response_text,
-                image_path=result.highlighted_image_path,
+                image_path=image_url,
                 data={
                     "route_intent": route.intent,
                     "route_reason": route.reason,
                     **conversation_data,
-                    "object": result.model_dump(mode="json"),
+                    "object": object_data,
                 },
             )
 

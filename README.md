@@ -169,13 +169,16 @@ GEMMA_VISION_MODEL=gemma4:e2b
 EMBEDDING_PROVIDER=ollama
 LOCAL_EMBEDDING_MODEL=nomic-embed-text
 CHROMA_EMBEDDING_DIMENSION=768
-CHROMA_PERSIST_DIR=Storage/chroma
+# Leave blank for the repository-root Storage/chroma directory; otherwise use an absolute path.
+CHROMA_PERSIST_DIR=
 CHROMA_COLLECTION_NAME=memory_events
 SEMANTIC_SEARCH_TOP_K=5
 
 # Database
 MONGODB_URI=mongodb://localhost:27017
 TIMEZONE=America/Los_Angeles
+# Leave blank for the repository root; otherwise use an absolute path.
+MEDIA_ROOT=
 
 # Gemini perception support
 GEMINI_VIDEO_MODEL=gemini-3-flash-preview
@@ -224,6 +227,11 @@ This serves:
 - web UI at `http://localhost:8000`
 - assistant query endpoint at `POST /query`
 - static media under `/capture/*` and `/storage/*`
+
+MongoDB stores media references as portable `Storage/...` or `Capture/...` paths.
+The backend resolves those paths beneath `MEDIA_ROOT` and exposes URL paths through
+the static mounts above. Leave `MEDIA_ROOT` blank unless runtime media lives under
+a different absolute root.
 
 ### 2. Start the backend for LAN/mobile access
 

@@ -2,10 +2,13 @@ import asyncio
 import datetime
 import logging
 import os
+import re
+from typing import Any
 
 from .audio_transcribe import Audio_agent
 from .db_client import ensure_events_indexes, get_events_collection
 from .memory_schema import memory_event_from_mongo, memory_event_to_mongo, new_memory_event
+from .media_paths import normalize_stored_path, to_fs_path, to_stored_path
 from .semantic_search import index_memory_event
 from .safety_agent import assess_event_safety, empty_safety_assessment
 from .alert_service import create_alert_for_safety_assessment
@@ -29,7 +32,7 @@ from .video_agent import Video_Agent, video_results
 logger = logging.getLogger(__name__)
 
 
-def _path_variants(path: str) -> list[str]:
+def _path_variants(path: str) -> list[Any]:
     if not path:
         return []
     variants = [path, os.path.normpath(path)]
@@ -37,7 +40,21 @@ def _path_variants(path: str) -> list[str]:
         variants.append(os.path.abspath(path))
     except OSError:
         pass
+    stored = normalize_stored_path(path)
+    if stored:
+        variants.extend([stored, os.path.normpath(stored)])
+        separator_tolerant_suffix = r"[\\/]".join(
+            re.escape(part) for part in stored.split("/")
+        )
+        variants.append(
+            re.compile(rf"(?:^|.*[\\/]){separator_tolerant_suffix}$", re.IGNORECASE)
+        )
     return list(dict.fromkeys(variants))
+
+
+def _filesystem_argument(path: str) -> str:
+    resolved = to_fs_path(path)
+    return str(resolved) if resolved is not None else ""
 
 
 def _brief_failure_note(modality: str) -> str:
@@ -81,8 +98,12 @@ async def consolidator_agent(
     loop = asyncio.get_running_loop()
 
     video_result, audio_result = await asyncio.gather(
-        loop.run_in_executor(None, video_agent.video_description, video_path),
-        loop.run_in_executor(None, audio_agent.transcribe_audio, audio_path),
+        loop.run_in_executor(
+            None, video_agent.video_description, _filesystem_argument(video_path)
+        ),
+        loop.run_in_executor(
+            None, audio_agent.transcribe_audio, _filesystem_argument(audio_path)
+        ),
         return_exceptions=True,
     )
 
@@ -109,9 +130,9 @@ async def consolidator_agent(
         video_description=video_details.video_description,
         room_objects=video_details.room_objects,
         audio_transcript=audio_transcript,
-        screenshot_path=screenshot_path,
-        video_path=os.path.normpath(video_path),
-        audio_path=os.path.normpath(audio_path),
+        screenshot_path=to_stored_path(screenshot_path) or "",
+        video_path=to_stored_path(video_path) or "",
+        audio_path=to_stored_path(audio_path) or "",
         danger_candidate=video_details.danger_candidate,
         scene_end_state=video_details.scene_end_state,
         observed_hazards=video_details.observed_hazards,

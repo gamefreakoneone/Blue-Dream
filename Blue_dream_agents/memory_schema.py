@@ -7,8 +7,10 @@ from bson import ObjectId
 from pydantic import BaseModel, Field
 
 try:
+    from .media_paths import normalize_stored_path, to_stored_path
     from .timezone_utils import LOCAL_TZ, now_local
 except ImportError:
+    from media_paths import normalize_stored_path, to_stored_path
     from timezone_utils import LOCAL_TZ, now_local
 
 
@@ -127,9 +129,9 @@ def memory_event_from_mongo(doc: dict[str, Any]) -> MemoryEvent:
         video_description=_normalize_text(doc.get("video_description")),
         room_objects=_normalize_room_objects(doc.get("room_objects")),
         audio_transcript=_normalize_text(doc.get("audio_transcript")),
-        screenshot_path=_normalize_text(doc.get("screenshot_path")),
-        video_path=_normalize_text(doc.get("video_path")),
-        audio_path=_normalize_text(doc.get("audio_path")),
+        screenshot_path=normalize_stored_path(doc.get("screenshot_path")) or "",
+        video_path=normalize_stored_path(doc.get("video_path")) or "",
+        audio_path=normalize_stored_path(doc.get("audio_path")) or "",
         semantic_text="",
         danger_candidate=bool(doc.get("danger_candidate", False)),
         scene_end_state=_normalize_text(doc.get("scene_end_state")),
@@ -168,9 +170,9 @@ def new_memory_event(
         video_description=_normalize_text(video_description),
         room_objects=_normalize_room_objects(room_objects),
         audio_transcript=_normalize_text(audio_transcript),
-        screenshot_path=_normalize_text(screenshot_path),
-        video_path=_normalize_text(video_path),
-        audio_path=_normalize_text(audio_path),
+        screenshot_path=to_stored_path(screenshot_path) or "",
+        video_path=to_stored_path(video_path) or "",
+        audio_path=to_stored_path(audio_path) or "",
         semantic_text="",
         danger_candidate=bool(danger_candidate),
         scene_end_state=_normalize_text(scene_end_state),
@@ -191,9 +193,9 @@ def memory_event_to_mongo(event: MemoryEvent) -> dict[str, Any]:
         "video_description": event.video_description,
         "room_objects": event.room_objects,
         "audio_transcript": event.audio_transcript,
-        "screenshot_path": event.screenshot_path,
-        "video_path": event.video_path,
-        "audio_path": event.audio_path,
+        "screenshot_path": to_stored_path(event.screenshot_path) or "",
+        "video_path": to_stored_path(event.video_path) or "",
+        "audio_path": to_stored_path(event.audio_path) or "",
         "semantic_text": event.semantic_text,
         "danger_candidate": event.danger_candidate,
         "scene_end_state": event.scene_end_state,

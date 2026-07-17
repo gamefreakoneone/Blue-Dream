@@ -31,6 +31,7 @@ try:
     from .db_client import close_mongo_client, ensure_events_indexes
     from .jeeves import run_single_query
     from .llm.ollama_runtime import close_http_client
+    from .media_paths import to_fs_path
 except ImportError:
     from conversation_memory import (
         append_conversation_turn,
@@ -50,6 +51,7 @@ except ImportError:
     from db_client import close_mongo_client, ensure_events_indexes
     from jeeves import run_single_query
     from llm.ollama_runtime import close_http_client
+    from media_paths import to_fs_path
 
 logger = logging.getLogger(__name__)
 GENERIC_ERROR_DETAIL = "Something went wrong. Please try again in a moment."
@@ -254,20 +256,16 @@ async def create_geofence_event(request: GeofenceEventRequest):
 
 
 # Mount the Capture directory to serve images
-capture_path = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Capture"
-)
-if os.path.exists(capture_path):
+capture_path = to_fs_path("Capture")
+if capture_path is not None and capture_path.exists():
     app.mount("/capture", StaticFiles(directory=capture_path), name="capture")
 else:
     print(f"Warning: Capture directory not found at {capture_path}")
 
 # Mount the Storage directory
-storage_path = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Storage"
-)
+storage_path = to_fs_path("Storage")
 print(f"DEBUG: Mounting storage from: {storage_path} to /storage")
-if os.path.exists(storage_path):
+if storage_path is not None and storage_path.exists():
     app.mount("/storage", StaticFiles(directory=storage_path), name="storage")
 else:
     print(f"Warning: Storage directory not found at {storage_path}")

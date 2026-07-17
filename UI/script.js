@@ -400,29 +400,8 @@ function addMessage(text, sender, imagePath = null) {
     messageDiv.appendChild(bubble);
 
     if (imagePath) {
-        // Adjust path if necessary. Provided path might be absolute or relative.
-        // We mounted 'Capture' folder at '/capture' in api.py.
-        // We need to detect if the path is within the Capture folder and rewrite it.
-        
-        let normalizedPath = imagePath.replace(/\\/g, '/');
-        
-        // Handle Capture mount
-        if (normalizedPath.toLowerCase().includes('/capture/')) {
-             const parts = normalizedPath.split(/\/capture\//i);
-             if (parts.length > 1) {
-                 normalizedPath = '/capture/' + parts[1];
-             }
-        }
-        // Handle Storage mount
-        else if (normalizedPath.toLowerCase().includes('/storage/')) {
-             const parts = normalizedPath.split(/\/storage\//i);
-             if (parts.length > 1) {
-                 normalizedPath = '/storage/' + parts[1];
-             }
-        }
-        
         const img = document.createElement('img');
-        img.src = normalizedPath; 
+        img.src = imagePath;
         img.alt = 'Search Result';
         img.classList.add('message-image');
         img.onerror = () => { img.style.display = 'none'; bubble.textContent += ' [Image failed to load]'; };

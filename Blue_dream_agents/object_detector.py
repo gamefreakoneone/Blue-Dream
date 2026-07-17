@@ -4,7 +4,6 @@ import asyncio
 import datetime
 import json
 import logging
-import os
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -18,6 +17,13 @@ try:
         with_patient_cctv_context,
     )
     from .llm.strands_runtime import invoke_multimodal_structured, invoke_structured
+    from .media_paths import (
+        normalize_stored_path,
+        resolve_output_dir,
+        to_fs_path,
+        to_stored_path,
+        to_url_path,
+    )
     from .memory_schema import MemoryEvent, ROOMS, memory_event_from_mongo
     from .prompt_budget import compact_json_records, truncate_text
     from .timezone_utils import now_local
@@ -30,6 +36,13 @@ except ImportError:
         with_patient_cctv_context,
     )
     from llm.strands_runtime import invoke_multimodal_structured, invoke_structured
+    from media_paths import (
+        normalize_stored_path,
+        resolve_output_dir,
+        to_fs_path,
+        to_stored_path,
+        to_url_path,
+    )
     from memory_schema import MemoryEvent, ROOMS, memory_event_from_mongo
     from prompt_budget import compact_json_records, truncate_text
     from timezone_utils import now_local
@@ -151,7 +164,8 @@ async def _parse_query_intent(user_query: str) -> ObjectQueryIntent:
 async def _check_image_worker(
     object_name: str, room: MemoryEvent
 ) -> Optional[Dict[str, Any]]:
-    if not room.screenshot_path or not os.path.exists(room.screenshot_path):
+    screenshot_path = to_fs_path(normalize_stored_path(room.screenshot_path))
+    if screenshot_path is None or not screenshot_path.exists():
         return None
 
     registry = get_model_registry()
@@ -171,7 +185,7 @@ async def _check_image_worker(
                 "on the kitchen counter'). Provide the matched object string when a "
                 "synonym or specific variant is visible."
             ),
-            image_path=room.screenshot_path,
+            image_path=str(screenshot_path),
             output_model=ObjectVisionCheck,
             system_prompt=with_patient_cctv_context(
                 "You inspect room images for a lost-object assistant helping a "
@@ -274,8 +288,10 @@ def _serialize_history_events(events: List[MemoryEvent]) -> List[Dict[str, Any]]
 
 
 def _existing_path_or_none(path: Optional[str]) -> Optional[str]:
-    if path and os.path.exists(path):
-        return path
+    stored_path = normalize_stored_path(path)
+    fs_path = to_fs_path(stored_path)
+    if stored_path and fs_path is not None and fs_path.exists():
+        return stored_path
     return None
 
 
@@ -344,12 +360,10 @@ async def _highlight_object(
     grounding_text: Optional[str] = None,
     output_dir: str = "Storage/highlighted",
 ) -> Optional[str]:
-    # Resolve output_dir relative to the project root (two levels up from this file)
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if not os.path.isabs(output_dir):
-        output_dir = os.path.join(project_root, output_dir)
-    else:
-        output_dir = os.path.abspath(output_dir)
+    source_path = to_fs_path(normalize_stored_path(image_path))
+    if source_path is None or not source_path.exists():
+        return None
+    resolved_output_dir = resolve_output_dir(output_dir)
 
     logger.info(
         "Attempting Gemini highlight for '%s' (matched: '%s') in image: %s",
@@ -360,15 +374,15 @@ async def _highlight_object(
 
     try:
         result = await highlight_object_with_gemini(
-            image_path=image_path,
+            image_path=str(source_path),
             object_name=object_name,
             matched_object=matched_object,
             grounding_text=grounding_text,
-            output_dir=output_dir,
+            output_dir=resolved_output_dir,
         )
         if result:
             logger.info("Highlight generated successfully: %s", result)
-            return _existing_path_or_none(result)
+            return _existing_path_or_none(to_stored_path(result))
         logger.warning(
             "Highlight returned None for '%s' - Gemini may not have found a bounding box.",
             object_name,
@@ -436,7 +450,7 @@ async def search_for_object(user_query: str) -> SearchResult:
                     best_match["description"],
                     highlight_generated=bool(highlight_path),
                 ),
-                highlighted_image_path=image_path_to_return,
+                highlighted_image_path=to_url_path(image_path_to_return),
                 evidence_type=(
                     "current_visual_highlight"
                     if highlight_path

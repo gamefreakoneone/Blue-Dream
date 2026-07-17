@@ -19,6 +19,13 @@ try:
     )
     from .gemini_spatial import highlight_object_with_gemini
     from .llm.settings import get_provider_settings
+    from .media_paths import (
+        normalize_stored_path,
+        resolve_output_dir,
+        to_fs_path,
+        to_stored_path,
+        to_url_path,
+    )
     from .memory_schema import MemoryEvent
     from .safety_agent import SafetyAssessment
     from .timezone_utils import now_local
@@ -31,6 +38,13 @@ except ImportError:
     )
     from gemini_spatial import highlight_object_with_gemini
     from llm.settings import get_provider_settings
+    from media_paths import (
+        normalize_stored_path,
+        resolve_output_dir,
+        to_fs_path,
+        to_stored_path,
+        to_url_path,
+    )
     from memory_schema import MemoryEvent
     from safety_agent import SafetyAssessment
     from timezone_utils import now_local
@@ -95,6 +109,9 @@ def _json_safe(value: Any) -> Any:
 def serialize_alert(doc: dict[str, Any]) -> dict[str, Any]:
     serialized = _json_safe(doc)
     serialized.pop("_id", None)
+    for field in ("image_path", "original_image_path"):
+        if field in serialized:
+            serialized[field] = to_url_path(serialized[field])
     return serialized
 
 
@@ -144,7 +161,7 @@ def choose_highlight_target(
 async def build_alert_image_fields(
     event: MemoryEvent, assessment: SafetyAssessment
 ) -> dict[str, Any]:
-    original_image_path = event.screenshot_path or ""
+    original_image_path = normalize_stored_path(event.screenshot_path) or ""
     if not original_image_path:
         return {
             "image_path": "",
@@ -153,7 +170,8 @@ async def build_alert_image_fields(
             "highlight_status": "unavailable",
         }
 
-    if not Path(original_image_path).exists():
+    original_fs_path = to_fs_path(original_image_path)
+    if original_fs_path is None or not original_fs_path.exists():
         return {
             "image_path": original_image_path,
             "original_image_path": original_image_path,
@@ -178,11 +196,11 @@ async def build_alert_image_fields(
     )
     try:
         highlighted_path = await highlight_object_with_gemini(
-            image_path=original_image_path,
+            image_path=str(original_fs_path),
             object_name=highlight_target,
             matched_object=highlight_target,
             grounding_text=grounding_text,
-            output_dir="Storage/highlighted",
+            output_dir=resolve_output_dir("Storage/highlighted"),
         )
     except Exception as exc:
         logger.warning(
@@ -195,7 +213,7 @@ async def build_alert_image_fields(
 
     if highlighted_path:
         return {
-            "image_path": highlighted_path,
+            "image_path": to_stored_path(highlighted_path) or original_image_path,
             "original_image_path": original_image_path,
             "highlight_target": highlight_target,
             "highlight_status": "generated",
