@@ -32,4 +32,4 @@ Completed on 2026-07-18. Qwen/OSS video understanding and the first provider-bac
 
 ## Commit Evidence
 
-- Implementation commit: pending; recorded in the documentation evidence follow-up.
+- Implementation commit: `653a652` (`feat: implement spec 0004 capture pipeline fix`).

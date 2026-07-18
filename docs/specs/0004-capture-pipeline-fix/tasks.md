@@ -33,4 +33,4 @@
 ## Wrap-Up
 
 - [x] Update `docs/FEATURE_STATUS.md` + `status.md` with evidence.
-- [ ] Commit and record the implementation SHA in the evidence follow-up.
+- [x] Commit and record the implementation SHA in the evidence follow-up.
