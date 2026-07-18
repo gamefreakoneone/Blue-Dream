@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import datetime
 import logging
+import os
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -309,7 +311,7 @@ async def build_alert_document(
         "_id": ObjectId(alert_id),
         "alert_id": alert_id,
         "event_id": event.event_id,
-        "alert_type": "safety",
+        "alert_type": "hazard",
         "hazard_type": assessment.hazard_type or "unknown",
         "severity": assessment.severity,
         "confidence": assessment.confidence,
@@ -366,6 +368,188 @@ async def create_alert_for_safety_assessment(
         }
     )
     return serialize_alert(alert)
+
+
+def _gmail_credentials_available() -> bool:
+    tools_dir = Path(__file__).resolve().parent / "Tools"
+    return any(
+        (tools_dir / filename).exists()
+        for filename in ("credentials.json", "token.pickle")
+    )
+
+
+async def deliver_caretaker_alert(alert: dict[str, Any]) -> dict[str, Any]:
+    """Deliver a caretaker-targeted alert through configured Gmail credentials."""
+
+    # Provider settings loads the project .env without overriding process values.
+    get_provider_settings()
+    recipient = (os.getenv("FALL_ALERT_RECIPIENT_EMAIL") or "").strip()
+    credentials_available = _gmail_credentials_available()
+    if not recipient or not credentials_available:
+        missing = []
+        if not recipient:
+            missing.append("recipient")
+        if not credentials_available:
+            missing.append("gmail_credentials")
+        return {"status": "not_configured", "missing": missing}
+
+    image_fs_path = to_fs_path(alert.get("image_path"))
+    created_at = alert.get("created_at")
+    timestamp = (
+        created_at.strftime("%Y-%m-%d %H:%M:%S")
+        if isinstance(created_at, datetime.datetime)
+        else str(created_at or "")
+    )
+
+    def _send_email() -> dict[str, Any]:
+        try:
+            from .Tools.dementia_email import GmailAgent
+        except ImportError:
+            from Tools.dementia_email import GmailAgent
+
+        agent = GmailAgent()
+        return agent.send_alert_email(
+            to=recipient,
+            subject=alert["title"],
+            alert_type=alert["title"],
+            location=alert.get("room_name") or "Unknown room",
+            timestamp=timestamp,
+            image_path=str(image_fs_path) if image_fs_path is not None else None,
+        )
+
+    try:
+        result = await asyncio.to_thread(_send_email)
+    except Exception:
+        logger.exception("Caretaker Gmail delivery failed for %s", alert["alert_id"])
+        return {"status": "failed"}
+
+    if result and result.get("success"):
+        details: dict[str, Any] = {"status": "sent", "channel": "gmail"}
+        if result.get("message_id"):
+            details["message_id"] = result["message_id"]
+        return details
+
+    logger.warning("Caretaker Gmail delivery returned failure for %s", alert["alert_id"])
+    return {"status": "failed", "channel": "gmail"}
+
+
+async def create_alert(
+    *,
+    alert_type: str = "hazard",
+    severity: str = "medium",
+    target_role: Literal["patient", "caretaker"] = "patient",
+    title: str,
+    body: str,
+    room_number: int,
+    room_name: str = "",
+    screenshot_path: str = "",
+    event_id: str = "",
+) -> dict[str, Any]:
+    """Persist a generic alert, then dispatch it through the role's delivery channel."""
+
+    await initialize_alert_indexes()
+    now = now_local()
+    alert_id = str(ObjectId())
+    stored_screenshot = normalize_stored_path(screenshot_path) or ""
+    alert = {
+        "_id": ObjectId(alert_id),
+        "alert_id": alert_id,
+        "event_id": event_id,
+        "alert_type": alert_type,
+        "hazard_type": alert_type,
+        "severity": severity,
+        "confidence": 1.0,
+        "target_role": target_role,
+        "title": title,
+        "body": body,
+        "message": body,
+        "detailed_explanation": "",
+        "recommended_action": (
+            "check_on_patient" if target_role == "caretaker" else ""
+        ),
+        "caretaker_recommended": target_role == "caretaker",
+        "room_number": room_number,
+        "room_name": room_name,
+        "image_path": stored_screenshot,
+        "original_image_path": stored_screenshot,
+        "highlight_target": None,
+        "highlight_status": (
+            "fallback_original" if stored_screenshot else "unavailable"
+        ),
+        "status": "open",
+        "delivery_status": "pending",
+        "deep_link": f"memoria://alerts/{alert_id}",
+        "created_at": now,
+        "updated_at": now,
+    }
+    await get_safety_alerts_collection().insert_one(alert)
+
+    try:
+        if target_role == "caretaker":
+            delivery_details = await deliver_caretaker_alert(alert)
+        else:
+            delivery_details = await deliver_patient_alert(alert)
+    except Exception:
+        logger.exception("Alert delivery failed for %s", alert_id)
+        delivery_details = {"status": "failed"}
+
+    delivery_status = delivery_details.get("status", "unknown")
+    await get_safety_alerts_collection().update_one(
+        {"alert_id": alert_id},
+        {
+            "$set": {
+                "delivery_status": delivery_status,
+                "delivery_details": delivery_details,
+                "updated_at": now_local(),
+            }
+        },
+    )
+    alert["delivery_status"] = delivery_status
+    alert["delivery_details"] = delivery_details
+    return serialize_alert(alert)
+
+
+def create_alert_sync(
+    *,
+    loop: Optional[asyncio.AbstractEventLoop],
+    alert_type: str = "hazard",
+    severity: str = "medium",
+    target_role: Literal["patient", "caretaker"] = "patient",
+    title: str,
+    body: str,
+    room_number: int,
+    room_name: str = "",
+    screenshot_path: str = "",
+    event_id: str = "",
+) -> Optional[concurrent.futures.Future]:
+    """Submit alert creation to a running loop without blocking synchronous capture."""
+
+    if loop is None or not loop.is_running():
+        logger.error("Cannot create %s alert: capture event loop is not running", alert_type)
+        return None
+    future = asyncio.run_coroutine_threadsafe(
+        create_alert(
+            alert_type=alert_type,
+            severity=severity,
+            target_role=target_role,
+            title=title,
+            body=body,
+            room_number=room_number,
+            room_name=room_name,
+            screenshot_path=screenshot_path,
+            event_id=event_id,
+        ),
+        loop,
+    )
+
+    def _log_failure(completed: concurrent.futures.Future) -> None:
+        try:
+            completed.result()
+        except Exception:
+            logger.exception("Background %s alert creation failed", alert_type)
+
+    future.add_done_callback(_log_failure)
+    return future
 
 
 async def _get_fcm_access_token(credentials_path: str) -> str:

@@ -128,6 +128,7 @@ If you want caregiver email alerts enabled:
 
 - place `credentials.json` in `Blue_dream_agents/Tools/`
 - allow the Gmail OAuth flow to generate `token.pickle`
+- set `FALL_ALERT_RECIPIENT_EMAIL` in the untracked `.env`
 
 Never commit credentials, tokens, service-account files, or local auth artifacts.
 
@@ -179,6 +180,17 @@ GEMINI_VIDEO_MAX_RETRIES=3
 GEMINI_VIDEO_RETRY_BASE_SECONDS=4
 VIDEO_ANALYSIS_TIMEOUT_SECONDS=300
 GEMINI_SPATIAL_MODEL=gemini-2.5-flash
+
+# Local cameras and fall detection
+CAMERA_INDICES=1,2
+CAMERA_ROOM_MAP=1:0,2:1
+FALL_MODEL_PATH=
+CAMERA_FRAME_WIDTH=1920
+CAMERA_FRAME_HEIGHT=1080
+CAMERA_FPS=20
+DETECTION_CONFIDENCE_THRESHOLD=0.50
+DETECTION_BUFFER_SECONDS=2
+FALL_STABILITY_SECONDS=3.5
 
 # Safety and alert prototype
 SAFETY_AGENT_ENABLED=true
@@ -240,6 +252,10 @@ python Capture/camera_feed.py
 ```
 
 This launches live camera monitoring, fall detection, and the recording pipeline. Press `q` in the camera window to stop it.
+Camera device indices and room mappings come from `CAMERA_INDICES` and
+`CAMERA_ROOM_MAP`; defaults preserve camera 1 as Bedroom and camera 2 as Living
+Room. The model path is resolved from the `Capture/` module, so this command can
+also be launched by absolute path from another working directory.
 
 ### 4. Start the mobile app
 
@@ -356,8 +372,8 @@ The first geofence implementation is intentionally prototype-simple: the backend
 - The OpenAI transcription fallback is offline-tested but not a live validation gate for spec 0003.
 - Remote Firebase push delivery is scaffolded but still requires final Firebase/device validation for production-style Android push.
 - Expo Go on Android SDK 54 does not support remote push notifications; use an EAS development build for real FCM testing.
-- `Capture/camera_feed.py` currently uses hardcoded camera indices `[1, 2]`.
-- Room assumptions are currently fixed to `0 = Bedroom` and `1 = Living Room`.
+- Capture defaults to camera indices `1,2`, mapped to room `0 = Bedroom` and
+  `1 = Living Room`; override the device-to-room mapping in `.env` for other hardware.
 - Gmail alerts require local credential artifacts under `Blue_dream_agents/Tools/` and `FALL_ALERT_RECIPIENT_EMAIL` in `.env`.
 - Chroma may recreate only the active provider collection when its metadata is invalid; sibling provider collections are preserved.
 - `Storage/` contains runtime media and should be treated as generated data, not source code.

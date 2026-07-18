@@ -78,6 +78,10 @@ async def ensure_alert_indexes() -> None:
     alerts = get_safety_alerts_collection()
     await alerts.create_index([("alert_id", 1)], name="alert_id_1", unique=True)
     await alerts.create_index([("status", 1), ("created_at", -1)], name="status_1_created_at_-1")
+    await alerts.create_index(
+        [("target_role", 1), ("status", 1), ("created_at", -1)],
+        name="target_role_1_status_1_created_at_-1",
+    )
     await alerts.create_index([("event_id", 1)], name="event_id_1")
 
     devices = get_devices_collection()
