@@ -48,4 +48,4 @@
 
 ## Wrap-Up
 
-- [ ] Spike findings + evidence in `status.md`; update `docs/FEATURE_STATUS.md`; commit.
+- [x] Spike findings + evidence in `status.md`; update `docs/FEATURE_STATUS.md`; commit.

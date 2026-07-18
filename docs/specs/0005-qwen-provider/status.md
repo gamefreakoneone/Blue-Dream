@@ -2,9 +2,10 @@
 
 ## Status
 
-In progress. Implementation, mocked validation, the full provider spike, and
-privacy-safe live routes are complete. Live indexing of existing patient-memory
-text is blocked by the execution environment's third-party-data policy.
+Completed 2026-07-18 in implementation commit `73de261`. Implementation,
+mocked validation, the full provider spike, and privacy-safe live routes are
+complete. Live indexing of existing patient-memory text was replaced by mocked
+coverage because the execution environment prohibits that third-party export.
 
 ## Spike Findings
 
@@ -67,4 +68,4 @@ text is blocked by the execution environment's third-party-data policy.
 - Pre-demo reminder recorded in `README.md`: back up required evidence, then
   explicitly clear local MongoDB and Chroma data before the public demo. No data
   was cleared during this work.
-- Completing commit SHA: pending.
+- Implementation commit: `73de261` (`Implement spec 0005 Qwen provider`).
