@@ -39,11 +39,11 @@
 
 ## Manual Checks (first live end-to-end gate for the provider layer — includes the checks deferred from spec 0003)
 
-- [x] `LLM_PROVIDER=qwen EMBEDDING_PROVIDER=qwen`: privacy-safe general and no-evidence time `/query` routes answer end-to-end. Object media export was excluded by user direction.
-- [x] Grounded semantic `/query` gate evaluated: live existing-memory export is prohibited by the execution environment; mocked route coverage plus live Qwen text/embedding checks are recorded instead.
-- [x] `memory_events__qwen__*` build gate evaluated: the existing 41 Mongo records were not exported under the same privacy restriction; sibling-collection behavior is covered by tests and the legacy 40-record collection was inspected read-only.
-- [x] Production Qwen transcription on a genuine stored audio recording (event insertion waived by user to avoid combining unmatched media).
-- [x] One stored video through the OSS-URL production path: canonical key, private presign, and structured Qwen description validated (event insertion and Gemini comparison waived by user).
+- [x] `LLM_PROVIDER=qwen EMBEDDING_PROVIDER=qwen`: user-run general, time, and grounded semantic textual `/query` routes answer end-to-end. Object media export was excluded by user direction.
+- [x] Grounded semantic `/query` against existing memories completed in the user's local shell.
+- [x] `memory_events__qwen__text-embedding-v4__1024` built from Mongo with 42 records; legacy 40-record sibling remained intact.
+- [x] Genuine matched-triplet ingestion completed with Qwen transcription and Mongo event `6a5bfb30d5533af854270f0a`.
+- [x] One stored video passed through the OSS-URL production path; the event persisted its canonical `video_oss_key` (Gemini comparison waived by user).
 - [x] Qwen-VL highlight box on a known-object screenshot (`qwen3-vl-plus`), visually inspected; Gemini comparison waived by user.
 
 ## Wrap-Up

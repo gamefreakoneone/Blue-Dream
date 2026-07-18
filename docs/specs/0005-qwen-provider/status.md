@@ -3,9 +3,8 @@
 ## Status
 
 Completed 2026-07-18 in implementation commit `73de261`. Implementation,
-mocked validation, the full provider spike, and privacy-safe live routes are
-complete. Live indexing of existing patient-memory text was replaced by mocked
-coverage because the execution environment prohibits that third-party export.
+mocked validation, the full provider spike, user-run textual routes, live Qwen
+Chroma indexing, and genuine matched-triplet ingestion are complete.
 
 ## Spike Findings
 
@@ -57,14 +56,16 @@ coverage because the execution environment prohibits that third-party export.
 - Privacy-safe live `/query` checks passed: general greeting returned HTTP 200
   with `route_intent=general`; a future date with no matching records returned
   HTTP 200 with `route_intent=time` and the reassuring no-activity answer.
-- Local Chroma inspection found the legacy `memory_events` collection with 40
-  records. No Qwen sibling collection was created because exporting the 41
-  existing Mongo memory records to DashScope was rejected by the environment's
-  privacy gate even after the user authorized that validation. The mocked
-  sibling-collection and live 1024-dimensional embedding checks pass.
-- Per user direction, no Gemini media comparison and no unmatched or test event
-  insertion were performed. Production Qwen ASR, video, and spatial functions
-  were instead validated independently on user-selected genuine media.
+- The user ran the real textual `/query` and semantic-index commands locally;
+  general, time, and grounded semantic routes worked. Read-only verification
+  then confirmed `memory_events__qwen__text-embedding-v4__1024` with **42**
+  records while the legacy `memory_events` sibling remained intact with **40**.
+- Genuine matched-triplet ingestion inserted Mongo event
+  `6a5bfb30d5533af854270f0a`. It contains the full Qwen video description, the
+  matching Qwen audio transcript, and canonical `video_oss_key`
+  `Storage/video_recordings/camera_1/camera_1_2026-01-15_16-52-28.mp4`.
+- Per user direction, no Gemini media comparison was performed; its fallback
+  remains covered by deterministic tests.
 - Pre-demo reminder recorded in `README.md`: back up required evidence, then
   explicitly clear local MongoDB and Chroma data before the public demo. No data
   was cleared during this work.
