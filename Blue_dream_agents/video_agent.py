@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import os
 import time
 
@@ -5,11 +7,18 @@ from google import genai
 from pydantic import BaseModel, Field
 
 try:
-    from .llm.settings import load_project_env
+    from .llm.client import invoke_video_structured
+    from .llm.model_registry import resolve
+    from .llm.settings import get_provider_settings, load_project_env
+    from .oss_media import presigned_url
 except ImportError:
-    from llm.settings import load_project_env
+    from llm.client import invoke_video_structured
+    from llm.model_registry import resolve
+    from llm.settings import get_provider_settings, load_project_env
+    from oss_media import presigned_url
 
 load_project_env()
+logger = logging.getLogger(__name__)
 
 VIDEO_ANALYSIS_TIMEOUT_SECONDS = float(
     os.getenv("VIDEO_ANALYSIS_TIMEOUT_SECONDS", "300")
@@ -166,3 +175,34 @@ class Video_Agent:
         response = self._generate_video_summary(myfile)
         result = video_results.model_validate_json(response.text)
         return result
+
+
+async def describe_video(
+    video_path: str, *, video_oss_key: str | None = None
+) -> video_results:
+    """Analyze one complete video, with full-video Gemini as Qwen's fallback."""
+
+    configured_provider = get_provider_settings().video_provider
+    if configured_provider == "gemini":
+        return await asyncio.to_thread(Video_Agent().video_description, video_path)
+
+    try:
+        target = resolve("video")
+        if target.provider != "qwen":
+            raise RuntimeError(f"Unsupported video provider: {target.provider}")
+        if not video_oss_key:
+            raise RuntimeError("Qwen video analysis requires an uploaded OSS object key.")
+        url = await asyncio.to_thread(presigned_url, video_oss_key)
+        return await invoke_video_structured(
+            video_url=url,
+            output_model=video_results,
+            text_prompt=VIDEO_ANALYSIS_PROMPT,
+            model_id=target.model,
+            task="video",
+        )
+    except Exception as exc:
+        logger.warning(
+            "Qwen/OSS video analysis failed; trying full-video Gemini fallback: %s",
+            exc,
+        )
+        return await asyncio.to_thread(Video_Agent().video_description, video_path)

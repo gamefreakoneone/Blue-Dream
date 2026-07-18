@@ -10,7 +10,7 @@ Two hard deadlines govern sequencing: **Qwen Cloud submission July 20, 2026, 2pm
 | 0002 | Media Path Service | In progress | `docs/specs/0002-media-path-service/status.md` | Implementation complete and 34 tests pass. Live ingestion/object validation now points to the spec 0005 Qwen ASR/reasoning gate; no image-bearing alert exists for the final render check. |
 | 0003 | LLM Provider Layer | Completed | `docs/specs/0003-llm-provider-layer/status.md` | Unified async client, direct consumer migration, provider-specific Chroma collections, and FastAPI client-cache cleanup; 49 offline tests pass. First live model validation remains in 0005 on Qwen. |
 | 0004 | Capture Pipeline Fix | Completed | `docs/specs/0004-capture-pipeline-fix/status.md` | Commit `653a652`; per-camera capture/state refactor, CWD-independent config, async caretaker fall alerts; 68 tests pass and one-camera live capture verified. Qwen/OSS understanding remains in 0005. |
-| 0005 | Qwen Provider | Not started | `docs/specs/0005-qwen-provider/status.md` | DashScope spike first (incl. OSS video round-trip); then Qwen text/structured/vision/embeddings + OSS-URL video understanding; VL grounding as stretch. **First live end-to-end gate** — Qwen is the only dev provider (Ollama not installed; openai used only in 0012). |
+| 0005 | Qwen Provider | In progress | `docs/specs/0005-qwen-provider/status.md` | Implementation complete, 74 mocked/offline tests pass, and the completing live DashScope/OSS spike passed 9/9 checks. Full-video Qwen and the Qwen story-book highlight are visually validated; live query/index, matched-triplet ingestion, and Gemini comparison gates remain. Production video ladder is OSS-URL Qwen → full-video Gemini → partial event, with no frame sampling. |
 | 0006 | Durable Memory | Not started | `docs/specs/0006-durable-memory/status.md` | Mongo-backed conversations, profile facts, reminders. |
 | 0007 | Memory Lifecycle | Not started | `docs/specs/0007-memory-lifecycle/status.md` | Importance at ingest, consolidation, pinning, context-budgeted recall, recall debug panel. |
 | 0008 | Proactive Channel | Not started | `docs/specs/0008-proactive-channel/status.md` | Trigger engine (safety, geofence, morning report, reminders) + polled agent-initiated chat. |
@@ -28,7 +28,7 @@ Two hard deadlines govern sequencing: **Qwen Cloud submission July 20, 2026, 2pm
 
 ## Cut Order (if the schedule slips)
 
-1. Video understanding degrades down its ladder: OSS-URL video → frame sampling → Gemini fallback; Qwen-VL grounding stays on the Gemini fallback (stretch task in 0005).
+1. Video understanding degrades down its ladder: OSS-URL Qwen analysis → full-video Gemini fallback → partial event. Frame sampling is intentionally excluded for long recordings. Qwen-VL grounding (core in 0005) is the first cut lever — if the schedule slips it degrades to the Gemini fallback.
 2. Spec 0010 ECS deployment is skipped entirely (DashScope usage in code is sufficient proof).
 3. Voice degrades from DashScope ASR/TTS to the browser Web Speech API (fallback tasks in 0009).
 

@@ -99,12 +99,14 @@ def test_memory_event_normalizes_legacy_media_paths():
             "room_number": 0,
             "screenshot_path": WINDOWS_LEGACY_SCREENSHOT,
             "video_path": r"C:\old\root\Storage\video_recordings\a.mp4",
+            "video_oss_key": r"C:\old\root\Storage\video_recordings\a.mp4",
             "audio_path": "/old/root/Storage/audio_recordings/a.mp3",
         }
     )
 
     assert event.screenshot_path == "Storage/screenshots/a.jpg"
     assert event.video_path == "Storage/video_recordings/a.mp4"
+    assert event.video_oss_key == "Storage/video_recordings/a.mp4"
     assert event.audio_path == "Storage/audio_recordings/a.mp3"
 
 
@@ -124,12 +126,14 @@ def test_new_memory_event_and_mongo_writer_store_portable_paths():
         screenshot_path=WINDOWS_LEGACY_SCREENSHOT,
         video_path=r"C:\old\Storage\video_recordings\a.mp4",
         audio_path=r"C:\old\Storage\audio_recordings\a.mp3",
+        video_oss_key=r"C:\old\Storage\video_recordings\a.mp4",
     )
     document = memory_event_to_mongo(event)
 
     assert document["screenshot_path"] == "Storage/screenshots/a.jpg"
     assert document["video_path"] == "Storage/video_recordings/a.mp4"
     assert document["audio_path"] == "Storage/audio_recordings/a.mp3"
+    assert document["video_oss_key"] == "Storage/video_recordings/a.mp4"
 
 
 def test_consolidator_dedupe_variants_match_legacy_absolute_root():

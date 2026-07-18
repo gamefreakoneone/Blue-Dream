@@ -32,14 +32,14 @@ The configured provider owns the main reasoning decisions in the prototype:
 - **Current-image object checks**: inspects current room snapshots before sending matched images to the configured spatial provider for highlighting.
 - **Safety warning decisions**: judges factual scene observations and decides whether an alert is warranted, how severe it is, and how to explain it safely.
 
-The same client exposes text, structured, multimodal, video, embeddings, ASR, and TTS capability boundaries. Qwen ASR/video and TTS are intentionally completed by specs 0005 and 0009; spec 0003 provides offline-tested OpenAI transcription fallback plumbing and explicit pending stubs.
+The same client exposes text, structured, multimodal, video, embeddings, ASR, and TTS capability boundaries. Qwen handles ASR through compatible-mode `input_audio`; TTS remains scheduled for spec 0009.
 
-Gemini remains available for video perception and spatial localization. Ollama is an optional OpenAI-compatible local profile and is not a prerequisite. Legacy Strands and Bedrock SDK paths have been removed.
+Full-video Qwen analysis uses a private Alibaba OSS presigned URL because inline video is capped at 10 MB. Any OSS or Qwen video failure falls directly to Gemini's existing full-video retry chain; spatial grounding also falls back to Gemini. Ollama is optional and is not a prerequisite.
 
 ## Demo Flow
 
 1. A room camera records a short event when activity is detected.
-2. The backend extracts video/audio evidence and stores a canonical memory event in MongoDB.
+2. The backend independently analyzes the silent visual recording and transcribes its paired microphone recording, then combines both into a canonical MongoDB memory event.
 3. The event's `semantic_text` is embedded through the configured provider and indexed in its own Chroma collection.
 4. A patient asks, "Where are my keys?" or "What was I doing today?"
 5. The configured model routes the query, judges evidence quality, and synthesizes a grounded response.
@@ -68,9 +68,9 @@ At a high level:
 - **Durable event store**: MongoDB `dementia_assistance.events`
 - **Alert store**: MongoDB `dementia_assistance.safety_alerts`
 - **Semantic index**: ChromaDB collections named `memory_events__{provider}__{model_slug}__{dim}`
-- **Video perception**: Gemini video models
-- **Spatial highlighting**: Gemini spatial localization
-- **Audio transcription**: offline-tested OpenAI fallback; Qwen live path lands in spec 0005
+- **Video perception**: `qwen3-vl-flash` via private OSS URL; full-video Gemini fallback
+- **Spatial highlighting**: `qwen3-vl-plus`; Gemini fallback
+- **Audio transcription**: `qwen3-asr-flash` compatible-mode `input_audio`
 - **Patient web app**: Static HTML/CSS/JS served by FastAPI
 - **Patient mobile app**: Expo React Native with Expo Router
 - **Computer vision**: OpenCV + Ultralytics YOLO
@@ -140,9 +140,9 @@ Copy `.env.example` to `.env` in the repository root and fill in the providers y
 # Provider selection
 LLM_PROVIDER=qwen
 EMBEDDING_PROVIDER=
-VIDEO_PROVIDER=gemini
-SPATIAL_PROVIDER=gemini
-TRANSCRIBE_PROVIDER=openai
+VIDEO_PROVIDER=qwen
+SPATIAL_PROVIDER=qwen
+TRANSCRIBE_PROVIDER=qwen
 TTS_PROVIDER=none
 
 # Provider credentials and compatible endpoints
@@ -156,11 +156,19 @@ OLLAMA_BASE_URL=http://localhost:11434
 LLM_TEXT_MODEL=
 LLM_SYNTHESIS_MODEL=
 LLM_VISION_MODEL=
+LLM_SPATIAL_MODEL=
 LLM_EMBEDDING_MODEL=
 LLM_EMBEDDING_DIM=
 LLM_TRANSCRIBE_MODEL=
 LLM_TTS_MODEL=
 LLM_VIDEO_MODEL=
+
+# Private Alibaba OSS bridge for full-video Qwen analysis
+OSS_ACCESS_KEY_ID=your_oss_access_key_id
+OSS_ACCESS_KEY_SECRET=your_oss_access_key_secret
+OSS_BUCKET=memoria
+OSS_ENDPOINT=oss-ap-southeast-1.aliyuncs.com
+OSS_PRESIGN_TTL_SECONDS=3600
 
 # Semantic retrieval
 # Leave blank for the repository-root Storage/chroma directory; otherwise use an absolute path.
@@ -368,8 +376,10 @@ The first geofence implementation is intentionally prototype-simple: the backend
 ## Prototype Boundaries and Operational Notes
 
 - Memoria is a functional prototype, not a medical device or emergency-response replacement.
-- Qwen is the default provider profile; live Qwen capability validation and ASR/video wiring are deliberately scoped to spec 0005.
-- The OpenAI transcription fallback is offline-tested but not a live validation gate for spec 0003.
+- **Pre-demo data reminder:** before the public demo, back up any evidence you need and then deliberately clear the local MongoDB demo data and Chroma vector collections. Do not perform this destructive reset during ordinary development or validation.
+- Qwen is the default provider profile. Silent capture video and separately recorded microphone audio are analyzed independently and combined during ingestion.
+- OSS is only a private transfer bridge for model access. Local `Storage/` files remain authoritative, presigned URLs are short-lived, and signed queries are never logged.
+- The video degradation ladder is OSS-URL Qwen → full-video Gemini → a partial event with the existing reassuring unavailable note. Frame sampling is not used.
 - Remote Firebase push delivery is scaffolded but still requires final Firebase/device validation for production-style Android push.
 - Expo Go on Android SDK 54 does not support remote push notifications; use an EAS development build for real FCM testing.
 - Capture defaults to camera indices `1,2`, mapped to room `0 = Bedroom` and
@@ -384,7 +394,7 @@ The first geofence implementation is intentionally prototype-simple: the backend
 Current overhaul status is tracked in [`docs/FEATURE_STATUS.md`](docs/FEATURE_STATUS.md).
 
 - **Validated offline**: unified provider resolution/client contracts, structured JSON hardening, provider-specific semantic indexes, media paths, and existing backend contracts.
-- **Next**: capture-pipeline repair (0004), followed by the first live Qwen end-to-end gate (0005).
+- **Current**: spec 0005 Qwen provider integration and its live end-to-end gate.
 - **Planned**: durable memory, lifecycle, proactive turns, voice, submission polish, and the OpenAI provider flip.
 
 ## Historical Kaggle Project Description

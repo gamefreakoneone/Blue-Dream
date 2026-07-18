@@ -21,14 +21,19 @@ def test_qwen_presets_and_key_fallback(monkeypatch):
     )
     from Blue_dream_agents.llm.model_registry import resolve
 
-    assert resolve("router").model == "qwen-plus"
-    assert resolve("synthesis").model == "qwen-max"
-    assert resolve("vision").model == "qwen-vl-max"
+    assert resolve("router").model == "qwen3.7-plus"
+    assert resolve("router").disable_thinking is True
+    assert resolve("judge").disable_thinking is True
+    assert resolve("synthesis").model == "qwen3.7-plus"
+    assert resolve("vision").model == "qwen3-vl-flash"
+    assert resolve("spatial").model == "qwen3-vl-plus"
+    assert resolve("video").model == "qwen3-vl-flash"
     embedding = resolve("embedding")
     assert embedding.model == "text-embedding-v4"
     assert embedding.embedding_dim == 1024
     assert embedding.api_key == "fallback-key"
     assert embedding.supports_json_object is True
+    assert resolve("transcribe").model == "qwen3-asr-flash"
 
 
 def test_capability_override_precedence(monkeypatch):

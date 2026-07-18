@@ -9,11 +9,13 @@ from .audio_transcribe import Audio_agent
 from .db_client import ensure_events_indexes, get_events_collection
 from .memory_schema import memory_event_from_mongo, memory_event_to_mongo, new_memory_event
 from .media_paths import normalize_stored_path, to_fs_path, to_stored_path
+from .llm.settings import get_provider_settings
+from .oss_media import upload_video
 from .semantic_search import index_memory_event
 from .safety_agent import assess_event_safety, empty_safety_assessment
 from .alert_service import create_alert_for_safety_assessment
 from .timezone_utils import now_local
-from .video_agent import Video_Agent, video_results
+from .video_agent import describe_video, video_results
 
 # So video is recorded. Then it is passed to the consolidator agent.
 # The consolidator agent will call the video_agent, to describe the video, and the audio_agent which will then transcribe the audio
@@ -61,6 +63,29 @@ def _brief_failure_note(modality: str) -> str:
     return f"{modality} unavailable for this recording."
 
 
+async def _analyze_video(video_path: str) -> tuple[video_results | None, str | None, Exception | None]:
+    """Upload for Qwen when selected, then analyze without blocking ingestion."""
+
+    filesystem_path = _filesystem_argument(video_path)
+    video_oss_key: str | None = None
+    if get_provider_settings().video_provider == "qwen":
+        try:
+            video_oss_key = await asyncio.to_thread(upload_video, video_path)
+        except Exception as exc:
+            logger.warning(
+                "OSS upload failed for %s; full-video Gemini fallback will be used: %s",
+                video_path,
+                exc,
+            )
+    try:
+        result = await describe_video(
+            filesystem_path, video_oss_key=video_oss_key
+        )
+        return result, video_oss_key, None
+    except Exception as exc:
+        return None, video_oss_key, exc
+
+
 async def consolidator_agent(
     video_path: str,
     audio_path: str,
@@ -93,20 +118,23 @@ async def consolidator_agent(
         return existing_doc.get("_id") or existing_event.event_id
 
     # Run video description and audio transcription in parallel (independent tasks)
-    video_agent = Video_Agent()
     audio_agent = Audio_agent()
-    loop = asyncio.get_running_loop()
 
-    video_result, audio_result = await asyncio.gather(
-        loop.run_in_executor(
-            None, video_agent.video_description, _filesystem_argument(video_path)
-        ),
+    video_outcome, audio_result = await asyncio.gather(
+        _analyze_video(video_path),
         audio_agent.transcribe_audio(_filesystem_argument(audio_path)),
         return_exceptions=True,
     )
 
-    if isinstance(video_result, Exception):
-        logger.warning("Video description failed for %s: %s", video_path, video_result)
+    video_oss_key: str | None = None
+    if isinstance(video_outcome, Exception):
+        video_result = None
+        video_error: Exception | None = video_outcome
+    else:
+        video_result, video_oss_key, video_error = video_outcome
+
+    if video_error is not None or video_result is None:
+        logger.warning("Video description failed for %s: %s", video_path, video_error)
         video_details = video_results(
             video_description=_brief_failure_note("Video analysis"),
             room_objects=[],
@@ -131,6 +159,7 @@ async def consolidator_agent(
         screenshot_path=to_stored_path(screenshot_path) or "",
         video_path=to_stored_path(video_path) or "",
         audio_path=to_stored_path(audio_path) or "",
+        video_oss_key=video_oss_key,
         danger_candidate=video_details.danger_candidate,
         scene_end_state=video_details.scene_end_state,
         observed_hazards=video_details.observed_hazards,

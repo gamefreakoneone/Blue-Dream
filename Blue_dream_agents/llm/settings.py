@@ -97,9 +97,9 @@ class ProviderSettings(BaseModel):
 
     llm_provider: ProviderName = "qwen"
     embedding_provider: ProviderName = "qwen"
-    video_provider: Literal["qwen", "gemini"] = "gemini"
-    spatial_provider: Literal["qwen", "gemini"] = "gemini"
-    transcribe_provider: Literal["qwen", "openai"] = "openai"
+    video_provider: Literal["qwen", "gemini"] = "qwen"
+    spatial_provider: Literal["qwen", "gemini"] = "qwen"
+    transcribe_provider: Literal["qwen", "openai"] = "qwen"
     tts_provider: Literal["qwen", "openai", "none"] = "none"
 
     dashscope_api_key: Optional[str] = None
@@ -114,6 +114,7 @@ class ProviderSettings(BaseModel):
     llm_text_model: Optional[str] = None
     llm_synthesis_model: Optional[str] = None
     llm_vision_model: Optional[str] = None
+    llm_spatial_model: Optional[str] = None
     llm_video_model: Optional[str] = None
     llm_embedding_model: Optional[str] = None
     llm_embedding_dim: Optional[int] = None
@@ -164,13 +165,13 @@ def get_provider_settings() -> ProviderSettings:
         llm_provider=llm_provider,
         embedding_provider=embedding_provider,
         video_provider=_env_choice(
-            "VIDEO_PROVIDER", "gemini", {"qwen", "gemini"}
+            "VIDEO_PROVIDER", "qwen", {"qwen", "gemini"}
         ),
         spatial_provider=_env_choice(
-            "SPATIAL_PROVIDER", "gemini", {"qwen", "gemini"}
+            "SPATIAL_PROVIDER", "qwen", {"qwen", "gemini"}
         ),
         transcribe_provider=_env_choice(
-            "TRANSCRIBE_PROVIDER", "openai", {"qwen", "openai"}
+            "TRANSCRIBE_PROVIDER", "qwen", {"qwen", "openai"}
         ),
         tts_provider=_env_choice(
             "TTS_PROVIDER", "none", {"qwen", "openai", "none"}
@@ -193,6 +194,7 @@ def get_provider_settings() -> ProviderSettings:
         llm_text_model=_env_optional("LLM_TEXT_MODEL"),
         llm_synthesis_model=_env_optional("LLM_SYNTHESIS_MODEL"),
         llm_vision_model=_env_optional("LLM_VISION_MODEL"),
+        llm_spatial_model=_env_optional("LLM_SPATIAL_MODEL"),
         llm_video_model=_env_optional("LLM_VIDEO_MODEL"),
         llm_embedding_model=_env_optional("LLM_EMBEDDING_MODEL"),
         llm_embedding_dim=_env_optional_int("LLM_EMBEDDING_DIM"),

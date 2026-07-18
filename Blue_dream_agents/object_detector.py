@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 try:
     from .db_client import get_mongo_client, close_mongo_client
-    from .gemini_spatial import highlight_object_with_gemini
+    from .spatial import highlight_object
     from .llm.model_registry import get_model_registry
     from .llm.prompt_context import (
         with_monitoring_evidence_context,
@@ -29,7 +29,7 @@ try:
     from .timezone_utils import now_local
 except ImportError:
     from db_client import get_mongo_client, close_mongo_client
-    from gemini_spatial import highlight_object_with_gemini
+    from spatial import highlight_object
     from llm.model_registry import get_model_registry
     from llm.prompt_context import (
         with_monitoring_evidence_context,
@@ -373,7 +373,7 @@ async def _highlight_object(
     )
 
     try:
-        result = await highlight_object_with_gemini(
+        result = await highlight_object(
             image_path=str(source_path),
             object_name=object_name,
             matched_object=matched_object,

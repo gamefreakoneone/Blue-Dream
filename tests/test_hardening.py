@@ -138,9 +138,12 @@ def test_consolidator_timeout_persists_partial_audio(monkeypatch):
 
     collection = FakeCollection()
 
-    class VideoStub:
-        def video_description(self, video_path):
-            raise TimeoutError("video processing timed out")
+    async def video_stub(video_path):
+        return (
+            None,
+            "Storage/video_recordings/camera_1/video.mp4",
+            TimeoutError("video processing timed out"),
+        )
 
     class AudioStub:
         async def transcribe_audio(self, audio_path):
@@ -154,7 +157,7 @@ def test_consolidator_timeout_persists_partial_audio(monkeypatch):
 
     monkeypatch.setattr(consolidator, "ensure_events_indexes", noop)
     monkeypatch.setattr(consolidator, "get_events_collection", lambda: collection)
-    monkeypatch.setattr(consolidator, "Video_Agent", VideoStub)
+    monkeypatch.setattr(consolidator, "_analyze_video", video_stub)
     monkeypatch.setattr(consolidator, "Audio_agent", AudioStub)
     monkeypatch.setattr(consolidator, "assess_event_safety", assess)
     monkeypatch.setattr(consolidator, "create_alert_for_safety_assessment", noop)
@@ -173,6 +176,7 @@ def test_consolidator_timeout_persists_partial_audio(monkeypatch):
     assert len(collection.inserted) == 1
     document = collection.inserted[0]
     assert document["video_description"] == "Video analysis unavailable for this recording."
+    assert document["video_oss_key"] == "Storage/video_recordings/camera_1/video.mp4"
     assert document["audio_transcript"] == "The patient asked where the keys were."
 
 
@@ -200,7 +204,6 @@ def test_consolidator_duplicate_does_not_reprocess_or_insert(monkeypatch):
 
     monkeypatch.setattr(consolidator, "ensure_events_indexes", noop)
     monkeypatch.setattr(consolidator, "get_events_collection", lambda: collection)
-    monkeypatch.setattr(consolidator, "Video_Agent", MustNotConstruct)
     monkeypatch.setattr(consolidator, "Audio_agent", MustNotConstruct)
     monkeypatch.setattr(consolidator, "index_memory_event", noop)
 

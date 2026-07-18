@@ -19,7 +19,7 @@ try:
         get_geofence_collection,
         get_safety_alerts_collection,
     )
-    from .gemini_spatial import highlight_object_with_gemini
+    from .spatial import highlight_object
     from .llm.settings import get_provider_settings
     from .media_paths import (
         normalize_stored_path,
@@ -38,7 +38,7 @@ except ImportError:
         get_geofence_collection,
         get_safety_alerts_collection,
     )
-    from gemini_spatial import highlight_object_with_gemini
+    from spatial import highlight_object
     from llm.settings import get_provider_settings
     from media_paths import (
         normalize_stored_path,
@@ -197,7 +197,7 @@ async def build_alert_image_fields(
         or event.video_description
     )
     try:
-        highlighted_path = await highlight_object_with_gemini(
+        highlighted_path = await highlight_object(
             image_path=str(original_fs_path),
             object_name=highlight_target,
             matched_object=highlight_target,

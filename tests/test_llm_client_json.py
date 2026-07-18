@@ -85,6 +85,7 @@ def test_structured_json_fences_and_embedded_payload(monkeypatch, raw):
     )
     assert result == StructuredResult(answer="ok", count=1)
     assert chat.calls[0]["response_format"] == {"type": "json_object"}
+    assert chat.calls[0]["extra_body"] == {"enable_thinking": False}
 
 
 def test_structured_invalid_then_valid_strict_retry(monkeypatch):
@@ -168,6 +169,7 @@ def test_embed_batching_and_dimension_validation(monkeypatch):
     result = asyncio.run(client.embed_texts(["a", "b", "c", "d", "e"]))
     assert len(result) == 5
     assert [len(call["input"]) for call in embeddings.calls] == [2, 2, 1]
+    assert all(call["dimensions"] == 3 for call in embeddings.calls)
 
     bad_embeddings = EmbeddingStub(2)
     monkeypatch.setattr(
@@ -204,7 +206,7 @@ def test_embed_texts_restores_sdk_index_order_across_batches(monkeypatch):
     assert [embedding[0] for embedding in result] == [97.0, 98.0, 99.0]
 
 
-def test_openai_transcription_file_shape_and_qwen_stub(monkeypatch, tmp_path):
+def test_openai_and_qwen_transcription_payload_shapes(monkeypatch, tmp_path):
     from Blue_dream_agents.llm import client
     from Blue_dream_agents.llm.model_registry import get_model_registry
     from Blue_dream_agents.llm.settings import get_provider_settings
@@ -237,5 +239,13 @@ def test_openai_transcription_file_shape_and_qwen_stub(monkeypatch, tmp_path):
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
     get_provider_settings.cache_clear()
     get_model_registry.cache_clear()
-    with pytest.raises(NotImplementedError, match="spec 0005"):
-        asyncio.run(client.transcribe_audio(audio_path))
+    chat = ChatStub(["hello from qwen"])
+    monkeypatch.setattr(client, "_get_client", lambda target: _fake_client(chat=chat))
+    assert asyncio.run(client.transcribe_audio(audio_path)) == "hello from qwen"
+    call = chat.calls[0]
+    assert call["model"] == "qwen3-asr-flash"
+    audio_part = call["messages"][0]["content"][0]
+    assert audio_part["type"] == "input_audio"
+    assert audio_part["input_audio"]["data"].startswith(
+        "data:audio/mp4;base64,"
+    )

@@ -75,26 +75,27 @@ One client (`Blue_dream_agents/llm/client.py`, built on `openai.AsyncOpenAI`) se
 
 | Capability | qwen (DashScope) | openai | ollama (optional local profile) |
 |---|---|---|---|
-| Text: routing/synthesis/judging | `qwen-plus` (routing/judging), `qwen-max` (synthesis — matches spec 0003 presets) | `gpt-5.6` | `gemma4:e2b` |
-| Vision: presence checks | `qwen-vl-max` | `gpt-5.6` | `gemma4:e2b` |
-| Spatial grounding (boxes) | `qwen-vl-max` (stretch) | Gemini fallback | Gemini fallback |
-| Video understanding | `qwen-vl-max` via presigned OSS video URL (primary); frame-sampling fallback | Gemini fallback | Gemini fallback |
+| Text: routing/synthesis/judging | `qwen3.7-plus` (thinking disabled on latency-sensitive routing/judging calls; spike-confirmed in 0005, superseding the spec 0003 `qwen-plus`/`qwen-max` presets) | `gpt-5.6` | `gemma4:e2b` |
+| Vision: presence checks | `qwen3-vl-flash` | `gpt-5.6` | `gemma4:e2b` |
+| Spatial grounding (boxes) | `qwen3-vl-plus` (high-precision localization; Gemini fallback on failure) | Gemini fallback | Gemini fallback |
+| Video understanding | `qwen3-vl-flash` via presigned OSS video URL (primary; 2 GB / 1 h URL ceilings); full-video Gemini fallback | Gemini fallback | Gemini fallback |
 | Embeddings | `text-embedding-v4` (1024d) | `text-embedding-3-small` (1536d) | `nomic-embed-text` (768d) |
 | Speech-to-text | `qwen3-asr-flash` | `gpt-4o-transcribe` | — (browser fallback) |
-| Text-to-speech | Qwen TTS (verify model in 0005 spike) | `gpt-4o-mini-tts` | — (browser fallback) |
+| Text-to-speech | `qwen3-tts-flash` (spike-confirmed in 0005) | `gpt-4o-mini-tts` | — (browser fallback) |
 
-Env surface: `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `VIDEO_PROVIDER=qwen|gemini`, `SPATIAL_PROVIDER=qwen|gemini`, `TRANSCRIBE_PROVIDER=qwen|openai`, `TTS_PROVIDER=qwen|openai|none`; `DASHSCOPE_API_KEY`, `DASHSCOPE_BASE_URL`, `OPENAI_API_KEY`, `OLLAMA_BASE_URL`, `GEMINI_API_KEY`; OSS video bridge (`OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, `OSS_BUCKET`, `OSS_ENDPOINT`, `OSS_PRESIGN_TTL_SECONDS`); per-task model overrides (`LLM_TEXT_MODEL`, `LLM_VISION_MODEL`, `LLM_EMBEDDING_MODEL`, `LLM_EMBEDDING_DIM`, ...).
+Env surface: `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `VIDEO_PROVIDER=qwen|gemini`, `SPATIAL_PROVIDER=qwen|gemini`, `TRANSCRIBE_PROVIDER=qwen|openai`, `TTS_PROVIDER=qwen|openai|none`; `DASHSCOPE_API_KEY`, `DASHSCOPE_BASE_URL`, `OPENAI_API_KEY`, `OLLAMA_BASE_URL`, `GEMINI_API_KEY`; OSS video bridge (`OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, `OSS_BUCKET`, `OSS_ENDPOINT`, `OSS_PRESIGN_TTL_SECONDS`); per-task model overrides (`LLM_TEXT_MODEL`, `LLM_VISION_MODEL`, `LLM_SPATIAL_MODEL`, `LLM_VIDEO_MODEL`, `LLM_EMBEDDING_MODEL`, `LLM_EMBEDDING_DIM`, ...).
 
 Structured-output hardening (JSON fence stripping, embedded-JSON extraction, Pydantic validation, one strict retry) is provider-agnostic and applied on every structured call, with native JSON modes layered on top (`json_object` for DashScope/Ollama, `json_schema` strict structured outputs for GPT-5.6).
 
 ### OSS video bridge (spec 0005)
 
-Inline (base64) video to DashScope is capped at 10 MB after encoding; URL-fed video supports far larger files. Recorded event videos are therefore uploaded to a private Alibaba OSS bucket (`memoria`, Singapore/ap-southeast-1 — same region as the DashScope intl endpoint) and consumed by `qwen-vl-max` as a `video_url` content part via a presigned URL. Rules:
+Inline (base64) video to DashScope is capped at 10 MB after encoding; URL-fed video supports far larger files (2 GB / up to 1 h for Qwen3-VL). Recorded event videos are therefore uploaded to a private Alibaba OSS bucket (`memoria`, Singapore/ap-southeast-1 — same region as the DashScope intl endpoint) and consumed by `qwen3-vl-flash` as a `video_url` content part via a presigned URL. Rules:
 
 - `Blue_dream_agents/oss_media.py` owns the bridge: `upload_video(fs_path) -> object_key` and `presigned_url(object_key, ttl) -> str` (SDK: `oss2`, pinned when spec 0005 lands). The object key mirrors the stored relative POSIX path (e.g. `Storage/video_recordings/camera_0/camera_0_20260718_101500.mp4`), so keys are derivable from `video_path`.
 - Upload happens at ingestion: the consolidator uploads the finished video immediately before the video-understanding call and stores the object key on the event (`video_oss_key`). The local file remains the source of truth; OSS is a transfer bridge for model access, never a media store for the UI (`/storage` static serving is unchanged).
+- Capture MP4s are intentionally silent. The paired microphone file is transcribed independently, and the consolidator combines its transcript with the full-video visual description before Mongo/Chroma persistence.
 - The bucket stays private; access is only via presigned URLs with a bounded TTL (`OSS_PRESIGN_TTL_SECONDS`, default 3600).
-- Fallback ladder for `VIDEO_PROVIDER=qwen`: OSS-URL video → OpenCV frame sampling (`frame_sampler.py`, inline image parts) → Gemini (licensed fallback, existing chain preserved). OSS being unreachable degrades video understanding; it never blocks event ingestion.
+- Fallback ladder for `VIDEO_PROVIDER=qwen`: OSS-URL Qwen video understanding → existing full-video Gemini analysis → partial event. Frame sampling is intentionally excluded so long recordings retain full temporal context. OSS being unreachable degrades video understanding; it never blocks event ingestion.
 
 ### Per-provider Chroma collections
 
@@ -139,12 +140,12 @@ Two implementation cautions for cleanups that *are* wanted: alert/index initiali
 
 ## DashScope Assumptions To Verify (spec 0005 spike, before dependent code)
 
-1. Correct base URL for the account region (`dashscope-intl.aliyuncs.com` vs `dashscope.aliyuncs.com`) and current model names.
-2. `response_format: json_object` support for the chosen text model in compatible mode.
+1. Correct base URL for the account region (`dashscope-intl.aliyuncs.com` vs `dashscope.aliyuncs.com`) and availability of the target models (`qwen3.7-plus`, `qwen3-vl-plus`, `qwen3-vl-flash`; fallback ladder in spec 0005 requirements).
+2. `response_format: json_object` support for `qwen3.7-plus` in compatible mode, plus its thinking-mode default and `enable_thinking: false` pass-through on non-streaming calls (latency matters — all text traffic runs on this model).
 3. `text-embedding-v4` availability on the compatible-mode `/embeddings` endpoint, its `dimensions` parameter, and the per-request batch limit (chunk `embed_texts` accordingly).
-4. Qwen-VL grounding output: bounding-box coordinate convention (absolute pixels vs 0–1000 normalized) and reliability through compatible mode.
-5. Video via OSS presigned URL: `oss2` upload + `sign_url` round-trip, then `qwen-vl-max` accepts the presigned URL as a `video_url` content part on the intl endpoint and answers about clip content; record the effective size/duration ceilings for our clips. Only if this fails: verify multiple `image_url` parts with a sequential-frames prompt (the frame-sampling fallback).
-6. ASR/TTS endpoint shapes: OpenAI-style `/audio/*` in compatible mode, or the native `dashscope` SDK (model names for `qwen3-asr-flash` and the current TTS model).
+4. Qwen-VL grounding output on `qwen3-vl-plus`: bounding-box coordinate convention (absolute pixels vs 0–1000 normalized) and reliability through compatible mode.
+5. Video via OSS presigned URL: `oss2` upload + `sign_url` round-trip, then `qwen3-vl-flash` accepts the presigned URL as a `video_url` content part on the intl endpoint and answers about clip content; record the effective size/duration ceilings for our clips. Multi-image sequential input is verified for API evidence only and is not a production fallback.
+6. ASR/TTS endpoint shapes: OpenAI-style `/audio/*` in compatible mode, or the native `dashscope` SDK (`qwen3-asr-flash` — incl. the `-filetrans` variant for stored files — and `qwen3-tts-flash`).
 
 ## Reference Documents
 

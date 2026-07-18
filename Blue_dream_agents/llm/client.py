@@ -183,6 +183,10 @@ async def _create_chat_completion(
     }
     if response_format is not None:
         kwargs["response_format"] = response_format
+    if target.provider == "qwen" and (
+        response_format is not None or target.disable_thinking
+    ):
+        kwargs["extra_body"] = {"enable_thinking": False}
     return await _get_client(target).chat.completions.create(**kwargs)
 
 
@@ -406,10 +410,13 @@ async def embed_texts(
     embeddings: list[list[float]] = []
     client = _get_client(target)
     for start in range(0, len(texts), batch_size):
-        response = await client.embeddings.create(
-            model=target.model,
-            input=texts[start : start + batch_size],
-        )
+        kwargs: dict[str, Any] = {
+            "model": target.model,
+            "input": texts[start : start + batch_size],
+        }
+        if target.provider == "qwen" and expected_dimension is not None:
+            kwargs["dimensions"] = expected_dimension
+        response = await client.embeddings.create(**kwargs)
         ordered = sorted(response.data, key=lambda item: item.index)
         for item in ordered:
             embedding = list(item.embedding)
@@ -424,9 +431,7 @@ async def embed_texts(
 
 async def transcribe_audio(audio_path: str | Path) -> str:
     target = resolve("transcribe")
-    if target.provider == "qwen":
-        raise NotImplementedError("Qwen ASR is wired and live-validated in spec 0005.")
-    if target.provider != "openai":
+    if target.provider not in {"qwen", "openai"}:
         raise NotImplementedError(
             f"Transcription is not available for provider {target.provider!r}."
         )
@@ -434,10 +439,37 @@ async def transcribe_audio(audio_path: str | Path) -> str:
     resolved = to_fs_path(audio_path)
     if resolved is None or not resolved.exists():
         raise FileNotFoundError(f"Audio path does not exist: {audio_path}")
+    if target.provider == "qwen":
+        mime_type = mimetypes.guess_type(resolved.name)[0] or "audio/mpeg"
+        encoded = base64.b64encode(resolved.read_bytes()).decode("ascii")
+        if len(encoded) > 10 * 1024 * 1024:
+            raise ValueError(
+                "Qwen compatible-mode ASR input exceeds the 10 MB encoded-data limit."
+            )
+        completion = await _create_chat_completion(
+            target=target,
+            model_id=None,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": f"data:{mime_type};base64,{encoded}"
+                            },
+                        }
+                    ],
+                }
+            ],
+            temperature=0,
+            max_tokens=1200,
+        )
+        return _completion_text(completion)
+
     with resolved.open("rb") as audio_file:
         transcript = await _get_client(target).audio.transcriptions.create(
-            model=target.model,
-            file=audio_file,
+            model=target.model, file=audio_file
         )
     text = getattr(transcript, "text", "")
     if not isinstance(text, str):

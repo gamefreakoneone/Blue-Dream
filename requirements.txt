@@ -8,6 +8,7 @@ opencv-python==5.0.0.93      # Camera capture and video processing
 
 # AI APIs
 google-genai==2.12.1               # Gemini API for video analysis
+oss2==2.19.1                       # Private Alibaba OSS video bridge for Qwen-VL
 google-auth==2.55.2                 # Firebase Cloud Messaging HTTP v1 service-account auth
 google-auth-oauthlib==1.4.0         # Gmail OAuth flow
 google-api-python-client==2.198.0   # Gmail API client

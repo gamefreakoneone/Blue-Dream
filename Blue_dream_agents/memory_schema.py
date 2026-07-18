@@ -31,6 +31,7 @@ class MemoryEvent(BaseModel):
     audio_transcript: str = ""
     screenshot_path: str = ""
     video_path: str = ""
+    video_oss_key: str | None = None
     audio_path: str = ""
     semantic_text: str = ""
     danger_candidate: bool = False
@@ -131,6 +132,7 @@ def memory_event_from_mongo(doc: dict[str, Any]) -> MemoryEvent:
         audio_transcript=_normalize_text(doc.get("audio_transcript")),
         screenshot_path=normalize_stored_path(doc.get("screenshot_path")) or "",
         video_path=normalize_stored_path(doc.get("video_path")) or "",
+        video_oss_key=normalize_stored_path(doc.get("video_oss_key")),
         audio_path=normalize_stored_path(doc.get("audio_path")) or "",
         semantic_text="",
         danger_candidate=bool(doc.get("danger_candidate", False)),
@@ -155,6 +157,7 @@ def new_memory_event(
     screenshot_path: str,
     video_path: str,
     audio_path: str,
+    video_oss_key: str | None = None,
     danger_candidate: bool = False,
     scene_end_state: str = "",
     observed_hazards: list[str] | None = None,
@@ -172,6 +175,7 @@ def new_memory_event(
         audio_transcript=_normalize_text(audio_transcript),
         screenshot_path=to_stored_path(screenshot_path) or "",
         video_path=to_stored_path(video_path) or "",
+        video_oss_key=to_stored_path(video_oss_key),
         audio_path=to_stored_path(audio_path) or "",
         semantic_text="",
         danger_candidate=bool(danger_candidate),
@@ -205,4 +209,6 @@ def memory_event_to_mongo(event: MemoryEvent) -> dict[str, Any]:
     }
     if ObjectId.is_valid(event.event_id):
         document["_id"] = ObjectId(event.event_id)
+    if event.video_oss_key:
+        document["video_oss_key"] = to_stored_path(event.video_oss_key)
     return document

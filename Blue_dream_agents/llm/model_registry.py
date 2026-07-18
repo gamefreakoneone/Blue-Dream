@@ -33,18 +33,20 @@ class TaskTarget(BaseModel):
     supports_json_object: bool = False
     supports_json_schema: bool = False
     embedding_dim: Optional[int] = None
+    disable_thinking: bool = False
 
 
 _PRESETS = {
     "qwen": {
-        "text": "qwen-plus",
-        "synthesis": "qwen-max",
-        "vision": "qwen-vl-max",
-        "video": "qwen-vl-max",
+        "text": "qwen3.7-plus",
+        "synthesis": "qwen3.7-plus",
+        "vision": "qwen3-vl-flash",
+        "spatial": "qwen3-vl-plus",
+        "video": "qwen3-vl-flash",
         "embedding": "text-embedding-v4",
         "embedding_dim": 1024,
         "transcribe": "qwen3-asr-flash",
-        "tts": "",
+        "tts": "qwen3-tts-flash",
     },
     "openai": {
         "text": "gpt-5.6",
@@ -104,7 +106,9 @@ def _model_for_task(
         return settings.llm_tts_model or str(presets["tts"])
     if task == "video":
         return settings.llm_video_model or str(presets["video"])
-    if task in {"vision", "spatial"}:
+    if task == "spatial":
+        return settings.llm_spatial_model or str(presets.get("spatial", presets["vision"]))
+    if task == "vision":
         return settings.llm_vision_model or str(presets["vision"])
     if task == "synthesis":
         return (
@@ -188,6 +192,7 @@ def resolve(task: str) -> TaskTarget:
         supports_json_object=provider in {"qwen", "ollama"},
         supports_json_schema=provider == "openai",
         embedding_dim=embedding_dim,
+        disable_thinking=provider == "qwen" and task_name in {"router", "judge"},
     )
 
 
