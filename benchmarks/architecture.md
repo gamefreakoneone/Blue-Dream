@@ -209,20 +209,18 @@ A final LLM call (`_synthesize_semantic_answer`) consumes the evidence bundle (s
 ## 6. LLM Abstraction
 
 ### Text & Structured Calls
-- **Entry point:** `Blue_dream_agents/llm/strands_runtime.py`
-- **Dispatch:** based on `LOCAL_LLM_PROVIDER` env var
-  - `ollama` → `ollama_runtime.py` (direct HTTP to `OLLAMA_BASE_URL`)
-  - `bedrock` → Strands SDK with BedrockModel
-- **`ollama_runtime.py` behavior:**
-  - Text calls: `POST /api/chat`, `stream=False`, `think=False`
-  - Structured calls: `format=json`, retry once on parse failure
-  - JSON extraction: strips Markdown fences, scans for JSON object/array, validates with Pydantic
-  - Multimodal: sends base64 image in `messages[N].images`
+- **Entry point:** `Blue_dream_agents/llm/client.py`
+- **Dispatch:** `LLM_PROVIDER=qwen|openai|ollama`, with per-capability overrides.
+- **Protocol:** one cached `AsyncOpenAI` client per endpoint and credential pair.
+- **Structured behavior:** provider JSON mode where supported, Markdown-fence
+  stripping, embedded JSON extraction, Pydantic validation, and one strict retry.
+- **Multimodal:** OpenAI-compatible base64 `image_url` content parts.
 
 ### Embeddings
-- **Entry point:** `Blue_dream_agents/llm/embedding_client.py`
-- **Active path:** Ollama `/api/embed` with `nomic-embed-text` (768-D)
-- **Legacy path:** Bedrock `amazon.nova-2-multimodal-embeddings-v1:0`
+- **Entry point:** `Blue_dream_agents/llm/client.py::embed_texts`
+- **Protocol:** async OpenAI-compatible `/embeddings`, chunked and dimension-validated.
+- **Collections:** `memory_events__{provider}__{model_slug}__{dim}` preserves
+  sibling vector spaces when providers change.
 
 ---
 
@@ -248,15 +246,14 @@ The consolidator skips duplicate `video_path` inserts and persists partial resul
 | Env Var | Default | Purpose |
 |---------|---------|---------|
 | `MONGODB_URI` | `mongodb://localhost:27017` | MongoDB connection |
-| `LOCAL_LLM_PROVIDER` | `ollama` | Text reasoning backend |
+| `LLM_PROVIDER` | `qwen` | Text reasoning backend |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama endpoint |
-| `GEMMA_TEXT_MODEL` | `gemma4:e2b` | Router / synthesis / judge |
-| `GEMMA_VISION_MODEL` | `gemma4:e2b` | Object presence checks |
-| `EMBEDDING_PROVIDER` | `ollama` | Embedding backend |
-| `LOCAL_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
-| `CHROMA_EMBEDDING_DIMENSION` | `768` | Vector dimension |
+| `LLM_TEXT_MODEL` | provider preset | Router / synthesis / judge override |
+| `LLM_VISION_MODEL` | provider preset | Object presence override |
+| `EMBEDDING_PROVIDER` | `LLM_PROVIDER` | Embedding backend |
+| `LLM_EMBEDDING_MODEL` | provider preset | Embedding model override |
+| `LLM_EMBEDDING_DIM` | provider preset | Vector dimension override |
 | `CHROMA_PERSIST_DIR` | `Storage/chroma` | Chroma filesystem path |
-| `CHROMA_COLLECTION_NAME` | `memory_events` | Chroma collection |
 | `SEMANTIC_SEARCH_TOP_K` | `5` | Number of semantic matches |
 
 ---

@@ -27,10 +27,10 @@
 
 ## Manual Checks
 
-Note: checks needing live `/query` reasoning (object question) defer to spec 0005 — no live reasoning provider exists pre-0005. Ingestion checks work now (Gemini video + OpenAI transcription keys are configured).
+Note: checks needing live `/query` reasoning and ingestion transcription defer to spec 0005. That spec provides the first live Qwen reasoning and ASR gate; spec 0002 does not wait for an OpenAI transcription key.
 
 - [ ] New ingested event doc in Mongo has relative POSIX paths.
-  - Blocked before write on 2026-07-17: the real unprocessed recording could not start ingestion because `OPENAI_TRANSCRIBE_API_KEY` is not configured; Mongo remained unchanged.
+  - Deferred to spec 0005 Qwen ASR live validation. The 2026-07-17 attempt using the old OpenAI path stopped before write and left Mongo unchanged.
 - [x] Legacy event (absolute Windows path) still: resolves for internal reads, returns `/storage/...` in responses, renders in the web UI.
 - [ ] Object question renders its highlighted image in the web UI without the old rewrite code (DEFERRED to spec 0005 — needs live reasoning).
 - [ ] Alert detail image renders.

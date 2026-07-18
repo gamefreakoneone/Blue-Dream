@@ -10,14 +10,14 @@ try:
     from .llm.model_registry import get_model_registry
     from .llm.prompt_context import with_patient_answer_context
     from .llm.settings import get_provider_settings
-    from .llm.strands_runtime import invoke_multimodal_structured, invoke_structured
+    from .llm.client import invoke_multimodal_structured, invoke_structured
     from .media_paths import normalize_stored_path, to_fs_path
     from .memory_schema import MemoryEvent
 except ImportError:
     from llm.model_registry import get_model_registry
     from llm.prompt_context import with_patient_answer_context
     from llm.settings import get_provider_settings
-    from llm.strands_runtime import invoke_multimodal_structured, invoke_structured
+    from llm.client import invoke_multimodal_structured, invoke_structured
     from media_paths import normalize_stored_path, to_fs_path
     from memory_schema import MemoryEvent
 
@@ -131,7 +131,6 @@ async def assess_event_safety(event: MemoryEvent) -> SafetyAssessment:
         return empty_safety_assessment("No danger candidate or observed hazards from video analysis.")
 
     registry = get_model_registry()
-    settings = get_provider_settings()
     prompt = _structured_prompt(bundle)
     structured_output_prompt = (
         "Return a safety decision for this one event. Use warning_needed=false and "
@@ -158,11 +157,11 @@ async def assess_event_safety(event: MemoryEvent) -> SafetyAssessment:
             prompt=prompt,
             output_model=SafetyAssessment,
             system_prompt=_system_prompt(),
-            model_id=registry.synthesis or settings.gemma_text_model,
+            model_id=registry.synthesis,
             structured_output_prompt=structured_output_prompt,
             temperature=0.0,
             max_tokens=900,
         )
     except Exception:
-        logger.exception("Gemma safety assessment failed for event %s", event.event_id)
+        logger.exception("Safety assessment failed for event %s", event.event_id)
         raise

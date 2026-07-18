@@ -101,9 +101,7 @@ async def consolidator_agent(
         loop.run_in_executor(
             None, video_agent.video_description, _filesystem_argument(video_path)
         ),
-        loop.run_in_executor(
-            None, audio_agent.transcribe_audio, _filesystem_argument(audio_path)
-        ),
+        audio_agent.transcribe_audio(_filesystem_argument(audio_path)),
         return_exceptions=True,
     )
 

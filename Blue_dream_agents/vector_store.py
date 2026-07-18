@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import os
-import shutil
-import sqlite3
 import logging
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -14,8 +12,10 @@ except ImportError:
     chromadb = None
 
 try:
+    from .llm.model_registry import resolve
     from .llm.settings import get_provider_settings
 except ImportError:
+    from llm.model_registry import resolve
     from llm.settings import get_provider_settings
 
 if TYPE_CHECKING:
@@ -25,7 +25,6 @@ if TYPE_CHECKING:
         from memory_schema import MemoryEvent
 
 
-PRODUCTION_EMBEDDING_DIMENSION = 768
 logger = logging.getLogger(__name__)
 
 
@@ -45,44 +44,14 @@ def _wrap_chroma_error(action: str, exc: BaseException) -> RuntimeError:
     return RuntimeError(f"ChromaDB failed while trying to {action}: {exc}")
 
 
-def _read_collection_metadata(
-    cursor: sqlite3.Cursor, collection_id: str
-) -> dict[str, Any]:
-    try:
-        cursor.execute("PRAGMA table_info(collection_metadata)")
-        columns = [row[1] for row in cursor.fetchall()]
-        if not columns:
-            return {}
-
-        cursor.execute(
-            "SELECT * FROM collection_metadata WHERE collection_id = ?",
-            (collection_id,),
-        )
-        rows = cursor.fetchall()
-    except sqlite3.Error:
-        return {}
-
-    metadata: dict[str, Any] = {}
-    for row in rows:
-        values = dict(zip(columns, row))
-        key = values.get("key")
-        if not key:
-            continue
-        for value_column in ("str_value", "int_value", "float_value", "bool_value"):
-            if value_column in values and values[value_column] is not None:
-                metadata[str(key)] = values[value_column]
-                break
-    return metadata
-
-
 @lru_cache(maxsize=4)
 def _get_cached_persistent_client(persist_dir: str):
     _ensure_chroma_available()
     normalized_path = _normalize_path(persist_dir)
-    os.makedirs(normalized_path, exist_ok=True)
+    Path(normalized_path).mkdir(parents=True, exist_ok=True)
     try:
         return chromadb.PersistentClient(path=normalized_path)
-    except BaseException as exc:  # pragma: no cover - depends on local Chroma runtime
+    except BaseException as exc:  # pragma: no cover - local Chroma runtime
         raise _wrap_chroma_error("open the persistent client", exc) from None
 
 
@@ -95,56 +64,94 @@ def get_chroma_client(persist_dir: Optional[str] = None):
     return _get_cached_persistent_client(persist_dir or settings.chroma_persist_dir)
 
 
+def _model_slug(model: str) -> str:
+    slug = re.sub(r"[^a-z0-9_-]+", "_", model.strip().lower()).strip("_-")
+    return slug or "unknown"
+
+
+def get_event_collection_name() -> str:
+    target = resolve("embedding")
+    if target.embedding_dim is None:
+        raise RuntimeError("The embedding target did not declare a vector dimension.")
+    return (
+        f"memory_events__{target.provider}__{_model_slug(target.model)}__"
+        f"{target.embedding_dim}"
+    )
+
+
 def get_embedding_dimension() -> int:
-    return get_provider_settings().chroma_embedding_dimension
+    dimension = resolve("embedding").embedding_dim
+    if dimension is None:
+        raise RuntimeError("The embedding target did not declare a vector dimension.")
+    return dimension
 
 
 def get_embedding_metadata() -> dict[str, Any]:
-    settings = get_provider_settings()
-    model_name = (
-        settings.local_embedding_model
-        if settings.embedding_provider == "ollama"
-        else settings.nova_embedding_model
-    )
+    target = resolve("embedding")
     return {
-        "embedding_provider": settings.embedding_provider,
-        "embedding_model": model_name,
-        "embedding_dimension": settings.chroma_embedding_dimension,
+        "provider": target.provider,
+        "model": target.model,
+        "dim": get_embedding_dimension(),
     }
 
 
-def _get_collection(
-    *,
-    persist_dir: str,
-    collection_name: str,
-    metadata: dict[str, Any],
-):
+def _metadata_matches(actual: Optional[dict[str, Any]]) -> bool:
+    metadata = actual or {}
+    return all(metadata.get(key) == value for key, value in get_embedding_metadata().items())
+
+
+def _create_event_collection(*, persist_dir: str):
     client = get_chroma_client(persist_dir)
+    collection_name = get_event_collection_name()
+    metadata = {
+        "purpose": "semantic_memory_search",
+        **get_embedding_metadata(),
+    }
     try:
-        return client.get_or_create_collection(
+        collection = client.get_or_create_collection(
             name=collection_name,
             metadata=metadata,
         )
-    except BaseException as exc:  # pragma: no cover - depends on local Chroma runtime
+        if not _metadata_matches(collection.metadata):
+            logger.warning(
+                "Recreating active Chroma collection %s due to metadata mismatch.",
+                collection_name,
+            )
+            client.delete_collection(collection_name)
+            collection = client.create_collection(
+                name=collection_name,
+                metadata=metadata,
+            )
+        return collection
+    except BaseException as exc:  # pragma: no cover - local Chroma runtime
         raise _wrap_chroma_error(
-            f"open collection '{collection_name}'",
-            exc,
+            f"open collection '{collection_name}'", exc
         ) from None
 
 
-def get_event_collection(
-    collection_name: Optional[str] = None,
-    persist_dir: Optional[str] = None,
-):
+def get_event_collection(persist_dir: Optional[str] = None):
     settings = get_provider_settings()
-    return _get_collection(
-        persist_dir=persist_dir or settings.chroma_persist_dir,
-        collection_name=collection_name or settings.chroma_collection_name,
-        metadata={
-            "purpose": "semantic_memory_search",
-            **get_embedding_metadata(),
-        },
+    return _create_event_collection(
+        persist_dir=persist_dir or settings.chroma_persist_dir
     )
+
+
+def reset_active_event_collection(persist_dir: Optional[str] = None):
+    settings = get_provider_settings()
+    resolved_dir = persist_dir or settings.chroma_persist_dir
+    client = get_chroma_client(resolved_dir)
+    collection_name = get_event_collection_name()
+    try:
+        try:
+            client.delete_collection(collection_name)
+        except Exception as exc:
+            if "does not exist" not in str(exc).lower() and "not found" not in str(exc).lower():
+                raise
+        return _create_event_collection(persist_dir=resolved_dir)
+    except BaseException as exc:  # pragma: no cover - local Chroma runtime
+        raise _wrap_chroma_error(
+            f"recreate active collection '{collection_name}'", exc
+        ) from None
 
 
 def count_indexed_events() -> int:
@@ -209,89 +216,20 @@ def query_similar_embeddings(
 
 
 def delete_event_ids(event_ids: list[str]) -> None:
-    if not event_ids:
-        return
-    get_event_collection().delete(ids=event_ids)
+    if event_ids:
+        get_event_collection().delete(ids=event_ids)
 
 
 def list_indexed_event_ids() -> list[str]:
     results = get_event_collection().get(include=[])
-    ids = results.get("ids", [])
-    return [str(event_id) for event_id in ids]
-
-
-def inspect_production_index() -> dict[str, Any]:
-    settings = get_provider_settings()
-    persist_dir = Path(settings.chroma_persist_dir)
-    sqlite_path = persist_dir / "chroma.sqlite3"
-    state: dict[str, Any] = {
-        "persist_dir": str(persist_dir),
-        "collection_name": settings.chroma_collection_name,
-        "sqlite_exists": sqlite_path.exists(),
-        "collection_exists": False,
-        "dimension": None,
-        "metadata": {},
-        "expected_metadata": get_embedding_metadata(),
-        "queue_count": 0,
-        "smoke_test_count": 0,
-        "error": None,
-    }
-    if not sqlite_path.exists():
-        return state
-
-    try:
-        connection = sqlite3.connect(str(sqlite_path))
-        cursor = connection.cursor()
-        cursor.execute(
-            "SELECT id, dimension FROM collections WHERE name = ? LIMIT 1",
-            (settings.chroma_collection_name,),
-        )
-        row = cursor.fetchone()
-        if row:
-            state["collection_exists"] = True
-            state["collection_id"] = row[0]
-            state["dimension"] = row[1]
-            state["metadata"] = _read_collection_metadata(cursor, row[0])
-
-        cursor.execute("SELECT COUNT(*) FROM embeddings_queue")
-        state["queue_count"] = int(cursor.fetchone()[0])
-        cursor.execute(
-            "SELECT COUNT(*) FROM embeddings_queue WHERE id = ?",
-            ("semantic-smoke-test",),
-        )
-        state["smoke_test_count"] = int(cursor.fetchone()[0])
-    except sqlite3.Error as exc:
-        state["error"] = str(exc)
-    finally:
-        try:
-            connection.close()
-        except UnboundLocalError:
-            pass
-
-    return state
-
-
-def reset_production_index() -> str:
-    settings = get_provider_settings()
-    persist_dir = Path(settings.chroma_persist_dir)
-    clear_cached_clients()
-    if persist_dir.exists():
-        try:
-            shutil.rmtree(persist_dir)
-        except OSError as exc:
-            logger.warning("Unable to reset Chroma persist dir %s: %s", persist_dir, exc)
-            raise _wrap_chroma_error(f"reset persist dir '{persist_dir}'", exc) from None
-    persist_dir.mkdir(parents=True, exist_ok=True)
-    return str(persist_dir)
+    return [str(event_id) for event_id in results.get("ids", [])]
 
 
 def run_vector_store_smoke_test() -> dict[str, Any]:
     _ensure_chroma_available()
     test_id = "semantic-smoke-test"
     embedding_dimension = get_embedding_dimension()
-    first_embedding = [0.001] * embedding_dimension
-    second_embedding = [0.001] * embedding_dimension
-
+    embedding = [0.001] * embedding_dimension
     client = chromadb.EphemeralClient()
     collection = client.get_or_create_collection(
         name="semantic_smoke_test",
@@ -302,10 +240,10 @@ def run_vector_store_smoke_test() -> dict[str, Any]:
     )
     collection.upsert(
         ids=[test_id],
-        embeddings=[first_embedding],
+        embeddings=[embedding],
         metadatas=[{"purpose": "smoke_test"}],
     )
-    results = collection.query(query_embeddings=[second_embedding], n_results=1)
+    results = collection.query(query_embeddings=[embedding], n_results=1)
     ids = results.get("ids", [[]])[0]
     return {
         "top_match": ids[0] if ids else None,

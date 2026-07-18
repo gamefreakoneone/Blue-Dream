@@ -3,32 +3,13 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-SUPPORTED_API_KEY_REGIONS = {
-    "ap-northeast-1",
-    "ap-northeast-2",
-    "ap-northeast-3",
-    "ap-south-1",
-    "ap-south-2",
-    "ap-southeast-1",
-    "ap-southeast-2",
-    "ca-central-1",
-    "eu-central-1",
-    "eu-central-2",
-    "eu-north-1",
-    "eu-south-1",
-    "eu-south-2",
-    "eu-west-1",
-    "eu-west-2",
-    "eu-west-3",
-    "sa-east-1",
-    "us-east-1",
-    "us-west-2",
-}
+ProviderName = Literal["qwen", "openai", "ollama"]
+T = TypeVar("T", bound=str)
 
 
 def _default_chroma_persist_dir() -> str:
@@ -36,6 +17,7 @@ def _default_chroma_persist_dir() -> str:
 
 
 def load_project_env() -> None:
+    """Load the repository .env without overriding process environment values."""
     env_path = Path(__file__).resolve().parents[2] / ".env"
     if not env_path.exists():
         return
@@ -56,114 +38,30 @@ def load_project_env() -> None:
             os.environ[key] = value
 
 
-def resolve_gemini_spatial_model() -> str:
-    load_project_env()
-    for env_name in ("GEMINI_SPATIAL_MODEL", "GEMINI_VIDEO_MODEL"):
-        value = (os.getenv(env_name) or "").strip()
-        if value:
-            return value
-    return "gemini-2.5-flash"
+def _env_choice(name: str, default: T, allowed: set[str]) -> T:
+    value = (os.getenv(name) or default).strip().lower()
+    if value not in allowed:
+        choices = ", ".join(sorted(allowed))
+        raise RuntimeError(f"Invalid {name}={value!r}; expected one of: {choices}.")
+    return value  # type: ignore[return-value]
 
 
-class ProviderSettings(BaseModel):
-    """Centralized runtime settings for local Gemma and legacy provider calls."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    local_llm_provider: Literal["ollama", "bedrock"] = Field(default="ollama")
-    ollama_base_url: str = Field(default="http://localhost:11434")
-    gemma_text_model: str = Field(default="gemma4:e2b")
-    gemma_vision_model: str = Field(default="gemma4:e2b")
-    bedrock_auth_mode: Literal["aws_credentials", "api_key", "unavailable"] = Field(
-        description="Selected Bedrock authentication mode"
-    )
-    bedrock_region: str = Field(description="Resolved Bedrock region")
-    bedrock_aws_region: str = Field(default="us-east-1")
-    bedrock_api_key_region: str = Field(default="us-east-1")
-    aws_bearer_token_bedrock: Optional[str] = Field(
-        default=None, description="Bedrock API key token if API-key auth is used"
-    )
-    gemini_api_key: Optional[str] = Field(
-        default=None, description="Gemini key retained for video and spatial paths"
-    )
-    gemini_spatial_model: str = Field(default="gemini-2.5-flash")
-    mongodb_uri: str = Field(default="mongodb://localhost:27017")
-    nova_router_model: str = Field(default="us.amazon.nova-2-lite-v1:0")
-    nova_synthesis_model: str = Field(default="us.amazon.nova-2-lite-v1:0")
-    nova_vision_model: str = Field(default="us.amazon.nova-2-lite-v1:0")
-    nova_vision_fallback_model: str = Field(default="us.amazon.nova-lite-v1:0")
-    nova_embedding_model: str = Field(
-        default="amazon.nova-2-multimodal-embeddings-v1:0"
-    )
-    embedding_provider: Literal["ollama", "bedrock"] = Field(default="ollama")
-    local_embedding_model: str = Field(default="nomic-embed-text")
-    chroma_embedding_dimension: int = Field(default=768)
-    chroma_persist_dir: str = Field(default_factory=_default_chroma_persist_dir)
-    chroma_collection_name: str = Field(default="memory_events")
-    semantic_search_top_k: int = Field(default=5)
-    safety_agent_enabled: bool = Field(default=True)
-    safety_alert_min_severity: str = Field(default="medium")
-    firebase_project_id: Optional[str] = None
-    firebase_credentials_path: Optional[str] = None
-    firebase_android_package: Optional[str] = None
-    patient_home_lat: Optional[float] = None
-    patient_home_lng: Optional[float] = None
-    patient_geofence_radius_meters: float = Field(default=100.0)
-    default_temperature: float = Field(default=0.1)
-    default_max_tokens: int = Field(default=1200)
-    request_timeout_seconds: float = Field(default=120.0)
+def _env_optional(name: str) -> Optional[str]:
+    value = (os.getenv(name) or "").strip()
+    return value or None
 
 
-def _has_aws_credentials() -> bool:
-    credential_signals = [
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "AWS_PROFILE",
-        "AWS_DEFAULT_PROFILE",
-        "AWS_WEB_IDENTITY_TOKEN_FILE",
-        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
-        "AWS_CONTAINER_CREDENTIALS_FULL_URI",
-    ]
-    return any(os.getenv(name) for name in credential_signals)
-
-
-def _resolve_regions() -> tuple[str, str]:
-    configured_region = (
-        os.getenv("BEDROCK_REGION")
-        or os.getenv("AWS_REGION")
-        or os.getenv("AWS_DEFAULT_REGION")
-        or ""
-    ).strip()
-
-    aws_region = (
-        os.getenv("BEDROCK_AWS_REGION") or configured_region or "us-east-1"
-    ).strip()
-    api_key_region = (
-        os.getenv("BEDROCK_API_KEY_REGION") or configured_region or "us-east-1"
-    ).strip()
-    if api_key_region not in SUPPORTED_API_KEY_REGIONS:
-        api_key_region = "us-east-1"
-
-    return aws_region, api_key_region
-
-
-def _resolve_local_llm_provider() -> Literal["ollama", "bedrock"]:
-    provider = (os.getenv("LOCAL_LLM_PROVIDER") or "ollama").strip().lower()
-    if provider in ("ollama", "local", "gemma"):
-        return "ollama"
-    if provider in ("bedrock", "nova", "aws"):
-        return "bedrock"
-    return "ollama"
-
-
-def _resolve_embedding_provider() -> Literal["ollama", "bedrock"]:
-    provider = (os.getenv("EMBEDDING_PROVIDER") or "ollama").strip().lower()
-    if provider in ("ollama", "local"):
-        return "ollama"
-    if provider in ("bedrock", "nova", "aws"):
-        return "bedrock"
-    return "ollama"
+def _env_optional_int(name: str) -> Optional[int]:
+    value = _env_optional(name)
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer, got {value!r}.") from exc
+    if parsed <= 0:
+        raise RuntimeError(f"{name} must be greater than zero, got {parsed}.")
+    return parsed
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -174,8 +72,8 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def _env_float(name: str) -> Optional[float]:
-    value = os.getenv(name)
-    if value is None or not value.strip():
+    value = _env_optional(name)
+    if value is None:
         return None
     try:
         return float(value)
@@ -183,82 +81,159 @@ def _env_float(name: str) -> Optional[float]:
         return None
 
 
+def resolve_gemini_spatial_model() -> str:
+    load_project_env()
+    for env_name in ("GEMINI_SPATIAL_MODEL", "GEMINI_VIDEO_MODEL"):
+        value = _env_optional(env_name)
+        if value:
+            return value
+    return "gemini-2.5-flash"
+
+
+class ProviderSettings(BaseModel):
+    """Centralized provider and application runtime settings."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    llm_provider: ProviderName = "qwen"
+    embedding_provider: ProviderName = "qwen"
+    video_provider: Literal["qwen", "gemini"] = "gemini"
+    spatial_provider: Literal["qwen", "gemini"] = "gemini"
+    transcribe_provider: Literal["qwen", "openai"] = "openai"
+    tts_provider: Literal["qwen", "openai", "none"] = "none"
+
+    dashscope_api_key: Optional[str] = None
+    dashscope_base_url: str = (
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    )
+    openai_api_key: Optional[str] = None
+    openai_transcribe_api_key: Optional[str] = None
+    openai_base_url: str = "https://api.openai.com/v1"
+    ollama_base_url: str = "http://localhost:11434"
+
+    llm_text_model: Optional[str] = None
+    llm_synthesis_model: Optional[str] = None
+    llm_vision_model: Optional[str] = None
+    llm_video_model: Optional[str] = None
+    llm_embedding_model: Optional[str] = None
+    llm_embedding_dim: Optional[int] = None
+    llm_transcribe_model: Optional[str] = None
+    llm_tts_model: Optional[str] = None
+    embed_batch_size: int = 10
+
+    gemini_api_key: Optional[str] = None
+    gemini_video_model: str = "gemini-3-flash-preview"
+    gemini_spatial_model: str = "gemini-2.5-flash"
+
+    oss_access_key_id: Optional[str] = None
+    oss_access_key_secret: Optional[str] = None
+    oss_bucket: str = "memoria"
+    oss_endpoint: str = "oss-ap-southeast-1.aliyuncs.com"
+    oss_presign_ttl_seconds: int = 3600
+
+    mongodb_uri: str = "mongodb://localhost:27017"
+    chroma_persist_dir: str = Field(default_factory=_default_chroma_persist_dir)
+    semantic_search_top_k: int = 5
+    safety_agent_enabled: bool = True
+    safety_alert_min_severity: str = "medium"
+    firebase_project_id: Optional[str] = None
+    firebase_credentials_path: Optional[str] = None
+    firebase_android_package: Optional[str] = None
+    patient_home_lat: Optional[float] = None
+    patient_home_lng: Optional[float] = None
+    patient_geofence_radius_meters: float = 100.0
+    default_temperature: float = 0.1
+    default_max_tokens: int = 1200
+    request_timeout_seconds: float = 120.0
+
+
 @lru_cache(maxsize=1)
 def get_provider_settings() -> ProviderSettings:
     load_project_env()
 
-    aws_region, api_key_region = _resolve_regions()
-    bearer_token = os.getenv("AWS_BEARER_TOKEN_BEDROCK")
-    local_llm_provider = _resolve_local_llm_provider()
-
-    if _has_aws_credentials():
-        auth_mode: Literal["aws_credentials", "api_key", "unavailable"] = (
-            "aws_credentials"
-        )
-        bedrock_region = aws_region
-    elif bearer_token:
-        auth_mode = "api_key"
-        bedrock_region = api_key_region
-    elif local_llm_provider == "ollama":
-        auth_mode = "unavailable"
-        bedrock_region = api_key_region
-    else:
-        raise RuntimeError(
-            "Missing Bedrock credentials. Configure AWS credentials or "
-            "set AWS_BEARER_TOKEN_BEDROCK, or set LOCAL_LLM_PROVIDER=ollama "
-            "for local Gemma text reasoning."
-        )
+    llm_provider = _env_choice(
+        "LLM_PROVIDER", "qwen", {"qwen", "openai", "ollama"}
+    )
+    embedding_provider = _env_choice(
+        "EMBEDDING_PROVIDER",
+        llm_provider,
+        {"qwen", "openai", "ollama"},
+    )
 
     return ProviderSettings(
-        local_llm_provider=local_llm_provider,
-        ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-        gemma_text_model=os.getenv("GEMMA_TEXT_MODEL", "gemma4:e2b"),
-        gemma_vision_model=os.getenv(
-            "GEMMA_VISION_MODEL",
-            os.getenv("GEMMA_TEXT_MODEL", "gemma4:e2b"),
+        llm_provider=llm_provider,
+        embedding_provider=embedding_provider,
+        video_provider=_env_choice(
+            "VIDEO_PROVIDER", "gemini", {"qwen", "gemini"}
         ),
-        bedrock_auth_mode=auth_mode,
-        bedrock_region=bedrock_region,
-        bedrock_aws_region=aws_region,
-        bedrock_api_key_region=api_key_region,
-        aws_bearer_token_bedrock=bearer_token,
-        gemini_api_key=os.getenv("GEMINI_API_KEY"),
+        spatial_provider=_env_choice(
+            "SPATIAL_PROVIDER", "gemini", {"qwen", "gemini"}
+        ),
+        transcribe_provider=_env_choice(
+            "TRANSCRIBE_PROVIDER", "openai", {"qwen", "openai"}
+        ),
+        tts_provider=_env_choice(
+            "TTS_PROVIDER", "none", {"qwen", "openai", "none"}
+        ),
+        dashscope_api_key=(
+            _env_optional("DASHSCOPE_API_KEY") or _env_optional("QWEN_APIKEY")
+        ),
+        dashscope_base_url=os.getenv(
+            "DASHSCOPE_BASE_URL",
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        ).rstrip("/"),
+        openai_api_key=_env_optional("OPENAI_API_KEY"),
+        openai_transcribe_api_key=_env_optional("OPENAI_TRANSCRIBE_API_KEY"),
+        openai_base_url=os.getenv(
+            "OPENAI_BASE_URL", "https://api.openai.com/v1"
+        ).rstrip("/"),
+        ollama_base_url=os.getenv(
+            "OLLAMA_BASE_URL", "http://localhost:11434"
+        ).rstrip("/"),
+        llm_text_model=_env_optional("LLM_TEXT_MODEL"),
+        llm_synthesis_model=_env_optional("LLM_SYNTHESIS_MODEL"),
+        llm_vision_model=_env_optional("LLM_VISION_MODEL"),
+        llm_video_model=_env_optional("LLM_VIDEO_MODEL"),
+        llm_embedding_model=_env_optional("LLM_EMBEDDING_MODEL"),
+        llm_embedding_dim=_env_optional_int("LLM_EMBEDDING_DIM"),
+        llm_transcribe_model=_env_optional("LLM_TRANSCRIBE_MODEL"),
+        llm_tts_model=_env_optional("LLM_TTS_MODEL"),
+        embed_batch_size=int(os.getenv("EMBED_BATCH_SIZE", "10")),
+        gemini_api_key=_env_optional("GEMINI_API_KEY"),
+        gemini_video_model=os.getenv(
+            "GEMINI_VIDEO_MODEL", "gemini-3-flash-preview"
+        ),
         gemini_spatial_model=resolve_gemini_spatial_model(),
+        oss_access_key_id=_env_optional("OSS_ACCESS_KEY_ID"),
+        oss_access_key_secret=_env_optional("OSS_ACCESS_KEY_SECRET"),
+        oss_bucket=os.getenv("OSS_BUCKET", "memoria"),
+        oss_endpoint=os.getenv(
+            "OSS_ENDPOINT", "oss-ap-southeast-1.aliyuncs.com"
+        ),
+        oss_presign_ttl_seconds=int(
+            os.getenv("OSS_PRESIGN_TTL_SECONDS", "3600")
+        ),
         mongodb_uri=os.getenv("MONGODB_URI", "mongodb://localhost:27017"),
-        nova_router_model=os.getenv(
-            "NOVA_ROUTER_MODEL", "us.amazon.nova-2-lite-v1:0"
-        ),
-        nova_synthesis_model=os.getenv(
-            "NOVA_SYNTHESIS_MODEL", "us.amazon.nova-2-lite-v1:0"
-        ),
-        nova_vision_model=os.getenv(
-            "NOVA_VISION_MODEL", "us.amazon.nova-2-lite-v1:0"
-        ),
-        nova_vision_fallback_model=os.getenv(
-            "NOVA_VISION_FALLBACK_MODEL", "us.amazon.nova-lite-v1:0"
-        ),
-        nova_embedding_model=os.getenv(
-            "NOVA_EMBEDDING_MODEL", "amazon.nova-2-multimodal-embeddings-v1:0"
-        ),
-        embedding_provider=_resolve_embedding_provider(),
-        local_embedding_model=os.getenv("LOCAL_EMBEDDING_MODEL", "nomic-embed-text"),
-        chroma_embedding_dimension=int(os.getenv("CHROMA_EMBEDDING_DIMENSION", "768")),
         chroma_persist_dir=os.getenv(
             "CHROMA_PERSIST_DIR", _default_chroma_persist_dir()
-        ),
-        chroma_collection_name=os.getenv(
-            "CHROMA_COLLECTION_NAME", "memory_events"
-        ),
+        )
+        or _default_chroma_persist_dir(),
         semantic_search_top_k=int(os.getenv("SEMANTIC_SEARCH_TOP_K", "5")),
         safety_agent_enabled=_env_bool("SAFETY_AGENT_ENABLED", True),
         safety_alert_min_severity=os.getenv(
             "SAFETY_ALERT_MIN_SEVERITY", "medium"
         ).strip().lower(),
-        firebase_project_id=os.getenv("FIREBASE_PROJECT_ID"),
-        firebase_credentials_path=os.getenv("FIREBASE_CREDENTIALS_PATH"),
-        firebase_android_package=os.getenv("FIREBASE_ANDROID_PACKAGE"),
+        firebase_project_id=_env_optional("FIREBASE_PROJECT_ID"),
+        firebase_credentials_path=_env_optional("FIREBASE_CREDENTIALS_PATH"),
+        firebase_android_package=_env_optional("FIREBASE_ANDROID_PACKAGE"),
         patient_home_lat=_env_float("PATIENT_HOME_LAT"),
         patient_home_lng=_env_float("PATIENT_HOME_LNG"),
-        patient_geofence_radius_meters=_env_float("PATIENT_GEOFENCE_RADIUS_METERS")
-        or 100.0,
+        patient_geofence_radius_meters=(
+            _env_float("PATIENT_GEOFENCE_RADIUS_METERS") or 100.0
+        ),
+        default_temperature=float(os.getenv("LLM_DEFAULT_TEMPERATURE", "0.1")),
+        default_max_tokens=int(os.getenv("LLM_DEFAULT_MAX_TOKENS", "1200")),
+        request_timeout_seconds=float(
+            os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "120")
+        ),
     )

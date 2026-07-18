@@ -17,7 +17,7 @@ try:
         with_patient_answer_context,
         with_patient_cctv_context,
     )
-    from .llm.strands_runtime import invoke_structured, invoke_text
+    from .llm.client import invoke_structured, invoke_text
     from .media_paths import to_url_path
     from .object_detector import run_object_query
     from .prompt_budget import compact_json_records, truncate_text
@@ -30,7 +30,7 @@ except ImportError:
         with_patient_answer_context,
         with_patient_cctv_context,
     )
-    from llm.strands_runtime import invoke_structured, invoke_text
+    from llm.client import invoke_structured, invoke_text
     from media_paths import to_url_path
     from object_detector import run_object_query
     from prompt_budget import compact_json_records, truncate_text

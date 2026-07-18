@@ -92,8 +92,8 @@ def test_lifespan_initializes_and_closes_clients(monkeypatch, api_module):
     )
     monkeypatch.setattr(
         api_module,
-        "close_http_client",
-        lambda: record("http-close"),
+        "close_llm_clients",
+        lambda: record("llm-close"),
     )
     monkeypatch.setattr(
         api_module,
@@ -104,7 +104,7 @@ def test_lifespan_initializes_and_closes_clients(monkeypatch, api_module):
     with TestClient(api_module.app):
         pass
 
-    assert calls == ["events", "alerts", "http-close", "mongo-close"]
+    assert calls == ["events", "alerts", "llm-close", "mongo-close"]
 
 
 def test_lifespan_tolerates_index_failure(monkeypatch, api_module):
@@ -113,14 +113,22 @@ def test_lifespan_tolerates_index_failure(monkeypatch, api_module):
     async def fail_indexes():
         raise RuntimeError("Mongo unavailable")
 
-    async def record_close():
-        calls.append("closed")
+    async def record_close(name):
+        calls.append(name)
 
     monkeypatch.setattr(api_module, "ensure_events_indexes", fail_indexes)
-    monkeypatch.setattr(api_module, "close_http_client", record_close)
-    monkeypatch.setattr(api_module, "close_mongo_client", record_close)
+    monkeypatch.setattr(
+        api_module,
+        "close_llm_clients",
+        lambda: record_close("llm-close"),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "close_mongo_client",
+        lambda: record_close("mongo-close"),
+    )
 
     with TestClient(api_module.app):
         pass
 
-    assert calls == ["closed", "closed"]
+    assert calls == ["llm-close", "mongo-close"]

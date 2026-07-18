@@ -2,33 +2,37 @@
 
 ## Prerequisites
 
-- [ ] Specs 0001–0002 completed (tests exist; media_paths available for image loading).
-- [ ] `DASHSCOPE_API_KEY` (or its `QWEN_APIKEY` fallback) present in `.env` — used by the follow-on 0005 live validation. No local Ollama required.
+- [x] Specs 0001–0002 implementation prerequisites satisfied (tests and `media_paths` exist). Spec 0002 remains In progress only on deferred live checks.
+- [x] `DASHSCOPE_API_KEY` (or its `QWEN_APIKEY` fallback) present in `.env` for the follow-on 0005 live validation. No local Ollama required.
 
 ## Implementation Tasks
 
-- [ ] Rewrite `llm/settings.py`: drop Nova/Bedrock fields; add `LLM_PROVIDER` + per-capability provider vars + DashScope/OpenAI/Ollama endpoints + per-task model overrides; keep the custom `.env` parser; read `DASHSCOPE_API_KEY` with `QWEN_APIKEY` fallback.
-- [ ] Rewrite `llm/model_registry.py` as `resolve(task) -> TaskTarget` with provider presets and override precedence.
-- [ ] Create `llm/client.py`: cached AsyncOpenAI clients; `invoke_text`, `invoke_structured` (ported hardening + retry), `invoke_multimodal_structured` (base64 image parts), `invoke_video_structured` (frames variant), `embed_texts` (chunked, dim-validated), `transcribe_audio` (openai branch), `synthesize_speech` stub.
-- [ ] Reduce `llm/strands_runtime.py` to a re-export shim; delete Strands/Bedrock machinery.
-- [ ] Delete `llm/bedrock_client.py`, `llm/ollama_runtime.py`, `llm/embedding_client.py`; update `audio_transcribe.py` to a shim over `client.transcribe_audio`.
-- [ ] `semantic_search.py`: call `client.embed_texts` directly (async); merge the duplicated retrieval/query functions.
-- [ ] `vector_store.py`: per-provider collection naming + metadata; delete SQLite inspection and rmtree reset; simplify mismatch handling to rebuild-from-Mongo.
-- [ ] `requirements.txt`: remove `strands-agents`, `boto3`; pin `openai`.
-- [ ] Purge Nova/Bedrock/Gemma-runtime references from `.env.example` (and confirm `AGENTS.md`/`TECHNICAL_DESIGN.md` stay accurate).
+- [x] Rewrite `llm/settings.py`: drop Nova/Bedrock fields; add provider selection, endpoints, models, and key fallback while preserving shared configuration.
+- [x] Rewrite `llm/model_registry.py` as `resolve(task) -> TaskTarget` with provider presets and override precedence.
+- [x] Create `llm/client.py`: cached AsyncOpenAI clients; text and structured calls; image/video calls; chunked validated embeddings; OpenAI transcription fallback; pending Qwen ASR/TTS stubs.
+- [x] Migrate all application and benchmark consumers directly to `llm.client`; delete `llm/strands_runtime.py` instead of retaining a zero-consumer shim.
+- [x] Delete `llm/bedrock_client.py`, `llm/ollama_runtime.py`, and `llm/embedding_client.py`; make `audio_transcribe.py` an async shim over `client.transcribe_audio`.
+- [x] Update FastAPI lifespan to await `client.close_llm_clients` before Mongo cleanup, including index-failure coverage.
+- [x] Update consolidator concurrency for async transcription and migrate its mocks.
+- [x] Merge semantic retrieval/query behind `_run_semantic`; await embeddings directly and keep blocking Chroma calls off the event loop.
+- [x] Use provider-specific Chroma collections and active-only rebuilds that preserve siblings.
+- [x] Remove `strands-agents` and `boto3`; keep the pinned OpenAI SDK.
+- [x] Update environment, setup, architecture, benchmark, and spec documentation.
 
 ## Tests
 
-- [ ] `tests/test_llm_client_json.py`: fence stripping, embedded-JSON extraction, strict retry, embed dimension mismatch, batch chunking (mocked SDK).
-- [ ] `tests/test_registry.py`: presets, overrides, missing-key errors.
-- [ ] Full suite passes.
+- [x] Registry tests cover presets, overrides, key fallback/errors, endpoint normalization, and dimensions.
+- [x] Client tests cover JSON hardening/retry, native JSON mode, image/video construction, embedding behavior, OpenAI transcription shape, and pending Qwen ASR.
+- [x] Temporary Chroma tests prove provider switches create siblings and active rebuilds preserve them.
+- [x] API lifespan, consolidator, semantic-error, benchmark, and test-environment coverage updated.
+- [x] Full offline suite passes.
 
 ## Manual Checks (offline gate — live checks run in spec 0005 on Qwen)
 
-- [ ] `grep -ri "bedrock\|strands\|nova" Blue_dream_agents/` → no live code references.
-- [ ] Backend starts cleanly with `LLM_PROVIDER=qwen` configured (no import/config errors; live queries deferred to 0005).
-- [ ] Ingestion transcription still works (OpenAI path) on one test audio file (`Blue_dream_agents/test_data/Recording.m4a`).
+- [x] Source grep for `bedrock|strands|boto3|nova` has zero Python-source hits under `Blue_dream_agents/`; this means no live Strands/Bedrock SDK usage.
+- [x] Backend imports and resolves the Qwen profile with `LLM_PROVIDER=qwen` without a live model call.
+- [x] OpenAI `Recording.m4a` smoke **skipped/non-gating, superseded by the spec 0005 Qwen ASR live check**. No OpenAI key is configured; mocked fallback coverage remains here.
 
 ## Wrap-Up
 
-- [ ] Update `docs/FEATURE_STATUS.md` + `status.md` with evidence; commit.
+- [x] Update `docs/FEATURE_STATUS.md`, spec 0002 deferred-live-check notes, and `status.md` with evidence; commit.

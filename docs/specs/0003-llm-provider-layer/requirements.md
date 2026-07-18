@@ -13,7 +13,7 @@ This spec lands with **offline validation only** (mocked-SDK pytest for JSON har
 - Native structured modes layered on top where supported: `response_format={"type":"json_object"}` (DashScope, Ollama), `json_schema` strict structured outputs (GPT-5.6; the schema branch itself is completed in spec 0012).
 - `llm/settings.py` rewritten: all Nova/Bedrock fields removed; new provider env surface added; the custom `.env` parser retained. The DashScope key is read from `DASHSCOPE_API_KEY` with a **`QWEN_APIKEY` fallback** (the name already used in the local `.env`); both documented in `.env.example`.
 - `llm/model_registry.py` rewritten to resolve `(provider, model, base_url, api_key, supports_json_mode)` per task: `router | synthesis | judge | vision | spatial | video | embedding | transcribe | tts`.
-- `llm/strands_runtime.py` becomes a thin shim re-exporting `client.py` functions so `jeeves.py`, `time_agent.py`, `object_detector.py`, `safety_agent.py` need no import changes.
+- All application and benchmark consumers migrate directly to `llm.client`; `llm/strands_runtime.py` is deleted. Existing invocation keyword signatures remain compatible so prompts and routing behavior do not change.
 - Dead provider code deleted: `llm/bedrock_client.py`, all Bedrock/Strands branches, `llm/ollama_runtime.py` (after porting), the Bedrock path in `llm/embedding_client.py` (embeddings move into `client.py`), `strands-agents` and `boto3` removed from `requirements.txt`; `openai` SDK pinned.
 - Per-provider Chroma collections: `memory_events__{provider}__{model_slug}__{dim}`; switching providers rebuilds from MongoDB and never destroys another provider's collection. The Chroma internal-SQLite inspection and the rmtree reset path are deleted.
 - `semantic_search.py`: the ~80 duplicated lines between `run_semantic_retrieval` and `run_semantic_query` are merged into one function with a synthesis flag.
@@ -34,5 +34,5 @@ This spec lands with **offline validation only** (mocked-SDK pytest for JSON har
 ## Acceptance Criteria
 
 - `pytest` passes, including new `tests/test_llm_client_json.py` (hardening behaviors) and existing contract tests — this offline suite is the gate for this spec; the four live `/query` route checks and the qwen Chroma collection rebuild run in spec 0005.
-- `grep -r "strands\|bedrock\|boto3\|nova" Blue_dream_agents/` returns no live code references.
+- The acceptance grep for `strands|bedrock|boto3|nova` is interpreted as **no live Strands/Bedrock SDK usage**. Python source under `Blue_dream_agents/` has zero such references; historical documentation is not runtime code.
 - Switching `EMBEDDING_PROVIDER` values creates sibling Chroma collections without touching existing ones.

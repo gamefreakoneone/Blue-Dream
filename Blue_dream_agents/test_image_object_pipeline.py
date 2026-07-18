@@ -19,7 +19,7 @@ try:
         with_monitoring_evidence_context,
         with_patient_cctv_context,
     )
-    from .llm.strands_runtime import invoke_multimodal_structured
+    from .llm.client import invoke_multimodal_structured
 except ImportError:
     from gemini_spatial import (
         GeminiSpatialResult,
@@ -31,7 +31,7 @@ except ImportError:
         with_monitoring_evidence_context,
         with_patient_cctv_context,
     )
-    from llm.strands_runtime import invoke_multimodal_structured
+    from llm.client import invoke_multimodal_structured
 
 
 class ObjectVisionCheck(BaseModel):

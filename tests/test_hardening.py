@@ -143,7 +143,7 @@ def test_consolidator_timeout_persists_partial_audio(monkeypatch):
             raise TimeoutError("video processing timed out")
 
     class AudioStub:
-        def transcribe_audio(self, audio_path):
+        async def transcribe_audio(self, audio_path):
             return "The patient asked where the keys were."
 
     async def noop(*args, **kwargs):

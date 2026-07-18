@@ -7,8 +7,8 @@ Two hard deadlines govern sequencing: **Qwen Cloud submission July 20, 2026, 2pm
 | Spec | Feature | Status | Evidence | Notes |
 |---|---|---|---|---|
 | 0001 | Cleanup And Hardening | Completed | `docs/specs/0001-cleanup-and-hardening/status.md` | 23 offline tests pass; pinned deps, safe errors, timeout, lifespan, alert init, and cleanup completed in this commit. |
-| 0002 | Media Path Service | In progress | `docs/specs/0002-media-path-service/status.md` | Implementation complete and 34 tests pass. Live ingestion awaits the transcription key; no image-bearing alert exists for the final render check; object reasoning remains deferred to 0005. |
-| 0003 | LLM Provider Layer | Not started | `docs/specs/0003-llm-provider-layer/status.md` | Single OpenAI-protocol client; per-provider Chroma collections. Validated offline (mocked pytest); first live validation happens in 0005 on Qwen. |
+| 0002 | Media Path Service | In progress | `docs/specs/0002-media-path-service/status.md` | Implementation complete and 34 tests pass. Live ingestion/object validation now points to the spec 0005 Qwen ASR/reasoning gate; no image-bearing alert exists for the final render check. |
+| 0003 | LLM Provider Layer | Completed | `docs/specs/0003-llm-provider-layer/status.md` | Unified async client, direct consumer migration, provider-specific Chroma collections, and FastAPI client-cache cleanup; 49 offline tests pass. First live model validation remains in 0005 on Qwen. |
 | 0004 | Capture Pipeline Fix | Not started | `docs/specs/0004-capture-pipeline-fix/status.md` | camera_feed restructure, weights path, camera env config, fall alerts through alert service. |
 | 0005 | Qwen Provider | Not started | `docs/specs/0005-qwen-provider/status.md` | DashScope spike first (incl. OSS video round-trip); then Qwen text/structured/vision/embeddings + OSS-URL video understanding; VL grounding as stretch. **First live end-to-end gate** — Qwen is the only dev provider (Ollama not installed; openai used only in 0012). |
 | 0006 | Durable Memory | Not started | `docs/specs/0006-durable-memory/status.md` | Mongo-backed conversations, profile facts, reminders. |

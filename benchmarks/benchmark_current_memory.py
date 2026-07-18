@@ -18,8 +18,8 @@ Expected environment variables
     OPENAI_API_KEY              Required.
     OPENAI_MODEL                LLM model (default: gpt-4o-mini)
     OPENAI_EMBEDDING_MODEL      Embedding model (default: text-embedding-3-small)
-    CHROMA_EMBEDDING_DIMENSION  Must match OpenAI dims (default: 1536)
-    CHROMA_COLLECTION_NAME      Isolated Chroma collection (default: benchmark_memory_events)
+    LLM_EMBEDDING_DIM           Must match OpenAI dims (default: 1536)
+    BENCHMARK_CHROMA_DIR        Isolated Chroma directory
     BENCHMARK_MONGO_COLLECTION  Isolated Mongo collection (default: events)
     MONGODB_URI                 MongoDB connection string (default: mongodb://localhost:27017)
 
@@ -49,25 +49,27 @@ from typing import Any, Optional
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-# Force OpenAI model names into the model_registry (it reads gemma_text_model
-# when LOCAL_LLM_PROVIDER=ollama, which we keep so Bedrock paths are avoided).
-os.environ.setdefault("LOCAL_LLM_PROVIDER", "ollama")
-os.environ.setdefault("GEMMA_TEXT_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
-os.environ.setdefault("GEMMA_VISION_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
+# Use the provider-layer environment surface added by spec 0003.
+os.environ.setdefault("LLM_PROVIDER", "openai")
+os.environ.setdefault("LLM_TEXT_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
+os.environ.setdefault("LLM_SYNTHESIS_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
 
-# Embedding config — we patch the actual embed_text function below, but we
-# still want settings.chroma_embedding_dimension to match the OpenAI model.
-os.environ.setdefault("EMBEDDING_PROVIDER", "ollama")
+# Embedding config — the calls are patched below, while registry metadata stays
+# aligned with the benchmark model and dimensions.
+os.environ.setdefault("EMBEDDING_PROVIDER", "openai")
 os.environ.setdefault(
-    "LOCAL_EMBEDDING_MODEL",
+    "LLM_EMBEDDING_MODEL",
     os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
 )
-os.environ.setdefault("CHROMA_EMBEDDING_DIMENSION", "1536")
+os.environ.setdefault("LLM_EMBEDDING_DIM", "1536")
 
-# Isolate Chroma collection so production memory_events is untouched.
+# Isolate the entire Chroma directory so production collections are untouched.
 os.environ.setdefault(
-    "CHROMA_COLLECTION_NAME",
-    os.getenv("BENCHMARK_CHROMA_COLLECTION", "benchmark_memory_events"),
+    "CHROMA_PERSIST_DIR",
+    os.getenv(
+        "BENCHMARK_CHROMA_DIR",
+        str(project_root / "Storage" / "benchmark-chroma"),
+    ),
 )
 
 from pydantic import BaseModel
@@ -94,10 +96,9 @@ _db_client.get_events_collection = _patched_get_events_collection
 # ---------------------------------------------------------------------------
 # 3. Monkey-patch LLM runtime to use OpenAI
 # ---------------------------------------------------------------------------
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI
 
 _openai_async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-_openai_sync_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 _openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 _openai_embedding_model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
@@ -115,7 +116,7 @@ async def _openai_invoke_text(
     max_tokens: Optional[int] = None,
     **kwargs: Any,
 ) -> str:
-    """Drop-in replacement for strands_runtime.invoke_text using OpenAI."""
+    """Drop-in replacement for the provider client's text invocation."""
     if tools:
         _logger.warning("OpenAI benchmark wrapper ignores tools for text invocation.")
     messages = [
@@ -146,7 +147,7 @@ async def _openai_invoke_structured(
     max_tokens: Optional[int] = None,
     **kwargs: Any,
 ) -> BaseModel:
-    """Drop-in replacement for strands_runtime.invoke_structured using OpenAI."""
+    """Drop-in replacement for the provider client's structured invocation."""
     if tools:
         _logger.warning("OpenAI benchmark wrapper ignores tools for structured invocation.")
 
@@ -196,45 +197,38 @@ async def _openai_invoke_multimodal_structured(
     )
 
 
-import Blue_dream_agents.llm.strands_runtime as _strands_runtime
+import Blue_dream_agents.llm.client as _llm_client
 
-_strands_runtime.invoke_text = _openai_invoke_text
-_strands_runtime.invoke_structured = _openai_invoke_structured
-_strands_runtime.invoke_multimodal_structured = _openai_invoke_multimodal_structured
+_llm_client.invoke_text = _openai_invoke_text
+_llm_client.invoke_structured = _openai_invoke_structured
+_llm_client.invoke_multimodal_structured = _openai_invoke_multimodal_structured
 
 
 # ---------------------------------------------------------------------------
-# 4. Monkey-patch embedding client to use OpenAI
+# 4. Monkey-patch shared embedding calls to use OpenAI
 # ---------------------------------------------------------------------------
-import Blue_dream_agents.llm.embedding_client as _embedding_client
-
-
-def _openai_embed_text(
-    text: str,
-    purpose: str = "document",
-    embedding_dimension: Optional[int] = None,
-    **kwargs: Any,
-) -> list[float]:
-    """Drop-in replacement for embedding_client.embed_text using OpenAI."""
-    cleaned = text.strip()
-    if not cleaned:
+async def _openai_embed_texts(
+    texts: list[str], task: str = "embedding", **kwargs: Any
+) -> list[list[float]]:
+    """Drop-in replacement for client.embed_texts using OpenAI."""
+    if any(not text.strip() for text in texts):
         raise ValueError("Cannot embed an empty string.")
 
-    response = _openai_sync_client.embeddings.create(
+    response = await _openai_async_client.embeddings.create(
         model=_openai_embedding_model,
-        input=cleaned,
+        input=texts,
     )
-    embedding = response.data[0].embedding
-    expected = embedding_dimension or int(os.getenv("CHROMA_EMBEDDING_DIMENSION", "1536"))
-    if len(embedding) != expected:
-        raise ValueError(
-            f"Embedding model returned {len(embedding)} dimensions; expected {expected}. "
-            "Ensure CHROMA_EMBEDDING_DIMENSION matches your OpenAI embedding model."
-        )
-    return embedding
+    expected = int(os.getenv("LLM_EMBEDDING_DIM", "1536"))
+    embeddings = [list(item.embedding) for item in sorted(response.data, key=lambda x: x.index)]
+    for embedding in embeddings:
+        if len(embedding) != expected:
+            raise ValueError(
+                f"Embedding model returned {len(embedding)} dimensions; expected {expected}."
+            )
+    return embeddings
 
 
-_embedding_client.embed_text = _openai_embed_text
+_llm_client.embed_texts = _openai_embed_texts
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +356,6 @@ async def close_benchmark_clients() -> None:
     """Close shared MongoDB and OpenAI clients."""
     await close_mongo_client()
     await _openai_async_client.close()
-    _openai_sync_client.close()
 
 
 # ---------------------------------------------------------------------------

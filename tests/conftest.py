@@ -11,9 +11,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 os.environ.setdefault("MONGODB_URI", "mongodb://127.0.0.1:1")
-os.environ.setdefault("LOCAL_LLM_PROVIDER", "ollama")
+os.environ.setdefault("LLM_PROVIDER", "ollama")
+os.environ.setdefault("EMBEDDING_PROVIDER", "ollama")
 os.environ.setdefault("OLLAMA_BASE_URL", "http://127.0.0.1:1")
 os.environ.setdefault("CHROMA_PERSIST_DIR", str(ROOT / "Storage" / "test-chroma"))
+
+
+def pytest_configure(config):
+    if config.option.basetemp is None:
+        config.option.basetemp = str(ROOT / "Storage" / "pytest-tmp")
 
 
 @pytest.fixture
@@ -40,7 +46,7 @@ def client(monkeypatch, api_module):
 
     monkeypatch.setattr(api_module, "ensure_events_indexes", noop)
     monkeypatch.setattr(api_module, "initialize_alert_indexes", noop)
-    monkeypatch.setattr(api_module, "close_http_client", noop)
+    monkeypatch.setattr(api_module, "close_llm_clients", noop)
     monkeypatch.setattr(api_module, "close_mongo_client", noop)
     monkeypatch.setattr(api_module, "run_single_query", canned_query)
 

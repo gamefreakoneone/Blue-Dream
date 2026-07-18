@@ -2,7 +2,7 @@
 
 ## Contracts You Must Not Break
 
-- The call surface used by `jeeves.py`, `time_agent.py`, `object_detector.py`, `safety_agent.py` via `strands_runtime` imports: `invoke_text(...)`, `invoke_structured(...)`, `invoke_multimodal_structured(...)` keyword signatures stay compatible.
+- The call surface used by `jeeves.py`, `time_agent.py`, `object_detector.py`, and `safety_agent.py` after their direct migration to `llm.client`: `invoke_text(...)`, `invoke_structured(...)`, and `invoke_multimodal_structured(...)` keyword signatures stay compatible.
 - `JeevesResponse` shapes and all endpoint contracts.
 - MongoDB is never touched by this spec; Chroma collections for other providers are never deleted.
 - `semantic_search` degradation rule: if embeddings are unavailable, semantic queries return the insufficient-evidence response, never a crash.
@@ -28,6 +28,13 @@ OLLAMA_BASE_URL=http://localhost:11434     # client appends /v1
 LLM_TEXT_MODEL=  LLM_SYNTHESIS_MODEL=  LLM_VISION_MODEL=
 LLM_EMBEDDING_MODEL=  LLM_EMBEDDING_DIM=
 LLM_TRANSCRIBE_MODEL=  LLM_TTS_MODEL=  LLM_VIDEO_MODEL=
+
+# OSS video bridge — used by the 0005 video path (documented here, wired in 0005)
+OSS_ACCESS_KEY_ID=
+OSS_ACCESS_KEY_SECRET=
+OSS_BUCKET=memoria
+OSS_ENDPOINT=oss-ap-southeast-1.aliyuncs.com
+OSS_PRESIGN_TTL_SECONDS=3600
 ```
 
 Provider presets (used when the per-task override is empty):
@@ -56,14 +63,14 @@ Gemini vars (`GEMINI_API_KEY`, `GEMINI_VIDEO_MODEL`, `GEMINI_SPATIAL_MODEL`, fal
   2. **Port verbatim** from `ollama_runtime.py`: `_strip_json_fences`, `_extract_json_payload` (raw_decode scan), Pydantic `model_validate`, and the retry loop that re-issues once with the stricter JSON-only instruction on parse/validation failure. Note: `_structured_messages(retry=...)` in the old file contains an unused retry branch — port the *live* retry mechanism from `_invoke_structured_chat`, not the dead one.
   3. Leave a `supports_json_schema` branch stub (raise `NotImplementedError` if selected) — completed in spec 0012.
 - `invoke_multimodal_structured(*, text_prompt, image_path, output_model, ...)` — content parts with base64 data URL (`{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,..."}}`), then the same hardening. Load images via `media_paths.to_fs_path`.
-- `invoke_video_structured(*, video_path | frame_paths, output_model, ...)` — accepts pre-sampled frame paths and sends them as multiple image parts with a sequential-frames instruction; used by spec 0005 stretch. For now implement the frames variant only.
+- `invoke_video_structured(*, video_url | frame_paths, output_model, ...)` — `video_url` sends a `{"type": "video_url", "video_url": {"url": ...}}` content part (the presigned-OSS-URL path used by spec 0005 as the primary qwen video route); `frame_paths` sends pre-sampled frames as multiple image parts with a sequential-frames instruction (the fallback). Both variants are offline-testable message construction here; live validation of the URL path happens in the 0005 spike.
 - `embed_texts(texts: list[str], task="embedding") -> list[list[float]]` — `client.embeddings.create`; chunk requests (`EMBED_BATCH_SIZE` env, default 10) and concatenate; validate returned dimension against `embedding_dim`, raising a descriptive error on mismatch.
 - `transcribe_audio(audio_path) -> str` — routes to OpenAI `audio.transcriptions` when `TRANSCRIBE_PROVIDER=openai` (move the logic from `audio_transcribe.py` here; keep that module as a shim calling this). Qwen branch raises `NotImplementedError` until 0005.
 - `synthesize_speech(text) -> bytes` — `NotImplementedError` until 0009.
 
-## Shim: `llm/strands_runtime.py`
+## Direct consumer migration
 
-Reduce to imports/re-exports from `client.py` with the same public names and keyword signatures. Delete Strands imports, Bedrock agent construction, model-ID candidate fallbacks, and the unused `strands_tool` wrapper.
+Migrate application and benchmark imports directly to `llm.client`, preserving public keyword signatures. Delete `llm/strands_runtime.py` together with its Strands imports, Bedrock agent construction, model-ID candidate fallbacks, and unused tool wrapper. No compatibility shim remains because there are no internal consumers that need it.
 
 ## Deletions
 
@@ -90,4 +97,4 @@ conda run -n Project-Memoria python -m pytest tests/ -q
 conda run -n Project-Memoria python -m compileall -q Blue_dream_agents
 ```
 
-This spec's gate is the offline suite plus `grep -ri "bedrock\|strands\|nova" Blue_dream_agents/` → no live code hits. **Live validation is deferred to spec 0005 (Qwen)**: one `/query` each for object / time / semantic / general and the `memory_events__qwen__text-embedding-v4__1024` rebuild run there, right after the DashScope spike.
+This spec's gate is the offline suite plus a source grep for `bedrock|strands|boto3|nova`, interpreted as **no live Strands/Bedrock SDK usage**. Python source under `Blue_dream_agents/` must have zero hits. **Live validation is deferred to spec 0005 (Qwen)**: one `/query` each for object / time / semantic / general and the `memory_events__qwen__text-embedding-v4__1024` rebuild run there, right after the DashScope spike.

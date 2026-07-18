@@ -16,7 +16,7 @@ try:
         with_monitoring_evidence_context,
         with_patient_cctv_context,
     )
-    from .llm.strands_runtime import invoke_multimodal_structured, invoke_structured
+    from .llm.client import invoke_multimodal_structured, invoke_structured
     from .media_paths import (
         normalize_stored_path,
         resolve_output_dir,
@@ -35,7 +35,7 @@ except ImportError:
         with_monitoring_evidence_context,
         with_patient_cctv_context,
     )
-    from llm.strands_runtime import invoke_multimodal_structured, invoke_structured
+    from llm.client import invoke_multimodal_structured, invoke_structured
     from media_paths import (
         normalize_stored_path,
         resolve_output_dir,

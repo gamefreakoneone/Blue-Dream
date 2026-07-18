@@ -12,9 +12,7 @@ google-auth==2.55.2                 # Firebase Cloud Messaging HTTP v1 service-a
 google-auth-oauthlib==1.4.0         # Gmail OAuth flow
 google-api-python-client==2.198.0   # Gmail API client
 openai==2.46.0                      # OpenAI API for transcription and image editing
-httpx==0.28.1                       # Local Ollama HTTP runtime client
-strands-agents==1.48.0              # Strands runtime over native Amazon Bedrock
-boto3==1.43.51                      # Native Amazon Bedrock client/auth stack
+httpx==0.28.1                       # Async HTTP used by alert delivery and API clients
 
 # Audio Processing
 PyAudio==0.2.14       # Audio recording

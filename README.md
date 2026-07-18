@@ -1,8 +1,8 @@
-# Project Memoria: Gemma-Powered Memory and Safety Support for Dementia Care
+# Project Memoria: Memory and Safety Support for Dementia Care
 
-Project Memoria is a dementia-support prototype built for the [Gemma 4 Good Hackathon](https://www.kaggle.com/competitions/gemma-4-good-hackathon/overview). It combines home monitoring, grounded memory recall, object finding, safety reasoning, and patient-facing mobile guidance.
+Project Memoria is a memory-grounded, voice-enabled dementia-support prototype. It combines home monitoring, grounded recall, object finding, safety reasoning, and patient-facing guidance for two 2026 hackathon submissions: Qwen Cloud MemoryAgent and OpenAI Build Week.
 
-At its core, Memoria uses **Gemma 4 E2B through local Ollama** as the reasoning layer for routing, recall synthesis, semantic evidence judging, current-image object checks, safety decisions, and patient-facing explanations. MongoDB stores durable memory events, ChromaDB indexes semantic memory using **Ollama embeddings** from `nomic-embed-text`, and the web and mobile apps turn those memories into practical support for patients and caregivers. This makes Memoria a natural fit for the hackathon's Ollama Local Ops special tech track as well as the health and safety impact themes.
+One async provider layer serves reasoning, structured output, vision, embeddings, and transcription through OpenAI-compatible APIs. `LLM_PROVIDER=qwen|openai|ollama` selects the profile, with Qwen Cloud as the rebuild default. MongoDB remains the durable source of truth; ChromaDB holds rebuildable, provider-specific semantic indexes.
 
 ![Demo GIF](Demo/shortened%20project%20meoria%20(1).gif)
 
@@ -16,40 +16,40 @@ Memoria is designed around one practical idea: use local, grounded AI to help pa
 
 - **Grounded memory chat**: Patients can ask natural-language questions about objects, activities, rooms, and recent events.
 - **Current-state object finding**: The assistant checks the latest room snapshots first, then falls back to historical memory when the object is not currently visible.
-- **Semantic recall**: Past room events are normalized into canonical memory records, embedded locally with Ollama, and indexed in ChromaDB for evidence retrieval.
-- **Safety reasoning prototype**: Factual observations from room events can be judged by Gemma for patient-actionable risks, such as unattended cooking or ambiguous hazards.
+- **Semantic recall**: Past room events are normalized into canonical memory records, embedded through the configured provider, and indexed in ChromaDB for evidence retrieval.
+- **Safety reasoning prototype**: Factual observations from room events can be judged for patient-actionable risks, such as unattended cooking or ambiguous hazards.
 - **Patient web UI**: FastAPI serves a lightweight Memoria chat interface at `http://localhost:8000`.
 - **Expo mobile app**: The React Native app supports chat, New Chat, alert list/detail screens, acknowledgement actions, geofence guidance, deep links, and notification scaffolding.
 - **Fall detection**: A custom YOLO model watches live camera feeds and can notify a caregiver or emergency contact through the alert path.
 
-## Gemma 4 Usage
+## Provider Architecture
 
-Gemma is not used as a generic chatbot wrapper. It owns the main reasoning decisions in the prototype:
+The configured provider owns the main reasoning decisions in the prototype:
 
 - **Query routing**: decides whether a patient question needs object search, time/activity recall, semantic memory retrieval, or a general response.
 - **Grounded answer synthesis**: turns retrieved memory evidence into concise patient-facing responses.
 - **Semantic evidence judging**: checks whether retrieved memories actually support the answer before responding.
-- **Current-image object checks**: inspects latest room snapshots through Ollama multimodal input to decide whether an object is visible now before sending matched images to Gemini for highlighting.
+- **Current-image object checks**: inspects current room snapshots before sending matched images to the configured spatial provider for highlighting.
 - **Safety warning decisions**: judges factual scene observations and decides whether an alert is warranted, how severe it is, and how to explain it safely.
 
-Ollama is also the local embedding runtime for memory search. Memoria uses `nomic-embed-text` vectors in ChromaDB, so semantic recall does not depend on Amazon/Nova embeddings in the primary hackathon path.
+The same client exposes text, structured, multimodal, video, embeddings, ASR, and TTS capability boundaries. Qwen ASR/video and TTS are intentionally completed by specs 0005 and 0009; spec 0003 provides offline-tested OpenAI transcription fallback plumbing and explicit pending stubs.
 
-Gemini remains on the active path for reliable full-video perception and precise spatial localization/highlighting. Audio transcription is a current prototype dependency used during ingestion. Bedrock/Nova code remains in the repository as optional legacy/future paths, not the primary hackathon runtime.
+Gemini remains available for video perception and spatial localization. Ollama is an optional OpenAI-compatible local profile and is not a prerequisite. Legacy Strands and Bedrock SDK paths have been removed.
 
 ## Demo Flow
 
 1. A room camera records a short event when activity is detected.
 2. The backend extracts video/audio evidence and stores a canonical memory event in MongoDB.
-3. The event's `semantic_text` is embedded locally with Ollama `nomic-embed-text` and indexed in ChromaDB.
+3. The event's `semantic_text` is embedded through the configured provider and indexed in its own Chroma collection.
 4. A patient asks, "Where are my keys?" or "What was I doing today?"
-5. Gemma routes the query, judges evidence quality, and synthesizes a grounded response.
-6. If Gemma sees the object in a current-room image, Memoria sends that matched image to Gemini Spatial for bounding-box highlighting.
-7. If a safety event is detected, Gemma judges whether the patient or caregiver should be alerted.
+5. The configured model routes the query, judges evidence quality, and synthesizes a grounded response.
+6. If the object is present in a current-room image, Memoria sends that image to the configured spatial provider for highlighting.
+7. If a safety event is detected, the configured model judges whether the patient or caregiver should be alerted.
 8. The mobile app can show the alert detail, acknowledgement actions, and geofence guidance.
 
 ## Architecture
 
-![Project Memoria Gemma Architecture](Demo/Project%20Memoria%20Gemma%20Architecture%20v2.png)
+![Project Memoria Architecture](Demo/Project%20Memoria%20Gemma%20Architecture%20v2.png)
 
 At a high level:
 
@@ -63,15 +63,14 @@ At a high level:
 
 ## Current Stack
 
-- **Local reasoning**: Gemma 4 E2B via Ollama (`gemma4:e2b`)
-- **Local embeddings**: Ollama `nomic-embed-text` for ChromaDB semantic memory
+- **Reasoning and embeddings**: Qwen Cloud by default through the unified async provider client
 - **Backend**: FastAPI
 - **Durable event store**: MongoDB `dementia_assistance.events`
 - **Alert store**: MongoDB `dementia_assistance.safety_alerts`
-- **Semantic index**: ChromaDB collection `memory_events`
+- **Semantic index**: ChromaDB collections named `memory_events__{provider}__{model_slug}__{dim}`
 - **Video perception**: Gemini video models
 - **Spatial highlighting**: Gemini spatial localization
-- **Audio transcription**: current prototype transcription dependency
+- **Audio transcription**: offline-tested OpenAI fallback; Qwen live path lands in spec 0005
 - **Patient web app**: Static HTML/CSS/JS served by FastAPI
 - **Patient mobile app**: Expo React Native with Expo Router
 - **Computer vision**: OpenCV + Ultralytics YOLO
@@ -81,19 +80,14 @@ At a high level:
 - Windows + PowerShell is the primary development environment used by this project.
 - Python 3.10+
 - MongoDB running locally unless `MONGODB_URI` overrides it
-- Ollama running locally with:
-  - `gemma4:e2b`
-  - `nomic-embed-text`
 - One or more webcams/cameras for live capture
 - PyTorch/Torchvision installed separately before `requirements.txt`
 - Node.js and npm for the mobile app
-- Required keys:
-  - `GEMINI_API_KEY`
-  - `OPENAI_TRANSCRIBE_API_KEY`
+- Required keys depend on the selected providers. The default Qwen profile uses `DASHSCOPE_API_KEY` (or `QWEN_APIKEY` fallback); Gemini features use `GEMINI_API_KEY`.
 - Optional keys/config:
   - Firebase service account settings for remote push delivery
   - Gmail OAuth credentials for caregiver email alerts
-  - Bedrock/Nova credentials only for optional legacy paths
+  - `OPENAI_API_KEY` for the offline-tested OpenAI profile or transcription fallback
 
 ## Setup
 
@@ -118,20 +112,7 @@ conda install pytorch torchvision -c pytorch -c nvidia
 pip install -r requirements.txt
 ```
 
-### 4. Prepare Ollama models
-
-```bash
-ollama pull gemma4:e2b
-ollama pull nomic-embed-text
-```
-
-Confirm both models are available:
-
-```bash
-ollama list
-```
-
-### 5. Prepare MongoDB
+### 4. Prepare MongoDB
 
 By default the app expects:
 
@@ -141,7 +122,7 @@ mongodb://localhost:27017
 
 If your MongoDB instance lives elsewhere, set `MONGODB_URI`.
 
-### 6. Optional Gmail alert setup
+### 5. Optional Gmail alert setup
 
 If you want caregiver email alerts enabled:
 
@@ -152,26 +133,37 @@ Never commit credentials, tokens, service-account files, or local auth artifacts
 
 ## Configuration
 
-Copy `.env.example` to `.env` in the repository root and fill in the providers you use. The current hackathon runtime uses Gemma/Ollama by default:
+Copy `.env.example` to `.env` in the repository root and fill in the providers you use. The rebuild defaults to Qwen:
 
 ```ini
-# Required core runtime keys
+# Provider selection
+LLM_PROVIDER=qwen
+EMBEDDING_PROVIDER=
+VIDEO_PROVIDER=gemini
+SPATIAL_PROVIDER=gemini
+TRANSCRIBE_PROVIDER=openai
+TTS_PROVIDER=none
+
+# Provider credentials and compatible endpoints
+DASHSCOPE_API_KEY=your_dashscope_key
+# QWEN_APIKEY is accepted when DASHSCOPE_API_KEY is unset.
+OPENAI_API_KEY=
 GEMINI_API_KEY=your_gemini_key
-OPENAI_TRANSCRIBE_API_KEY=your_openai_transcription_key
-
-# Local Gemma/Ollama reasoning
-LOCAL_LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
-GEMMA_TEXT_MODEL=gemma4:e2b
-GEMMA_VISION_MODEL=gemma4:e2b
 
-# Local semantic retrieval
-EMBEDDING_PROVIDER=ollama
-LOCAL_EMBEDDING_MODEL=nomic-embed-text
-CHROMA_EMBEDDING_DIMENSION=768
+# Optional per-capability model overrides
+LLM_TEXT_MODEL=
+LLM_SYNTHESIS_MODEL=
+LLM_VISION_MODEL=
+LLM_EMBEDDING_MODEL=
+LLM_EMBEDDING_DIM=
+LLM_TRANSCRIBE_MODEL=
+LLM_TTS_MODEL=
+LLM_VIDEO_MODEL=
+
+# Semantic retrieval
 # Leave blank for the repository-root Storage/chroma directory; otherwise use an absolute path.
 CHROMA_PERSIST_DIR=
-CHROMA_COLLECTION_NAME=memory_events
 SEMANTIC_SEARCH_TOP_K=5
 
 # Database
@@ -212,7 +204,7 @@ EXPO_PUBLIC_API_BASE_URL=http://<your-lan-ip>:8000
 
 Metro reads this at startup, so restart `npx expo start` after changing it.
 
-Optional legacy Bedrock/Nova settings still exist for the Bedrock provider and embedding fallback. They are not required for the primary Gemma recall, routing, synthesis, current-image object check, or safety decision flow.
+See `.env.example` for the complete configuration surface, including OSS video-bridge, safety, Firebase, and geofence settings.
 
 ## Running the System
 
@@ -349,7 +341,7 @@ The first geofence implementation is intentionally prototype-simple: the backend
 
 ## Repository Layout
 
-- **`Blue_dream_agents/`**: FastAPI backend, Gemma/Ollama runtime, assistant orchestration, memory retrieval, safety agent, alert service, and LLM settings
+- **`Blue_dream_agents/`**: FastAPI backend, unified provider client, assistant orchestration, memory retrieval, safety agent, and alert service
 - **`Capture/`**: Camera ingestion, audio capture, video queueing, and fall detection
 - **`UI/`**: Static patient web UI served by FastAPI
 - **`Mobile/`**: Expo React Native patient app
@@ -360,26 +352,28 @@ The first geofence implementation is intentionally prototype-simple: the backend
 ## Prototype Boundaries and Operational Notes
 
 - Memoria is a functional prototype, not a medical device or emergency-response replacement.
-- Gemma/Ollama is the active local reasoning runtime, but the current implementation still uses Gemini for full-video perception and spatial localization.
-- Audio transcription is currently handled through a prototype dependency during ingestion.
+- Qwen is the default provider profile; live Qwen capability validation and ASR/video wiring are deliberately scoped to spec 0005.
+- The OpenAI transcription fallback is offline-tested but not a live validation gate for spec 0003.
 - Remote Firebase push delivery is scaffolded but still requires final Firebase/device validation for production-style Android push.
 - Expo Go on Android SDK 54 does not support remote push notifications; use an EAS development build for real FCM testing.
 - `Capture/camera_feed.py` currently uses hardcoded camera indices `[1, 2]`.
 - Room assumptions are currently fixed to `0 = Bedroom` and `1 = Living Room`.
 - Gmail alerts require local credential artifacts under `Blue_dream_agents/Tools/` and `FALL_ALERT_RECIPIENT_EMAIL` in `.env`.
-- Chroma may reset local persisted state if it detects an invalid or mismatched collection layout.
+- Chroma may recreate only the active provider collection when its metadata is invalid; sibling provider collections are preserved.
 - `Storage/` contains runtime media and should be treated as generated data, not source code.
 - `Storage/`, `Proof/`, and local credential files are Git-ignored, but `/storage` is still served by the development backend. Keep the backend on a trusted local network until authentication and media access controls are added.
 
 ## Roadmap Snapshot
 
-Current overhaul status is tracked in [`PLANS.md`](PLANS.md).
+Current overhaul status is tracked in [`docs/FEATURE_STATUS.md`](docs/FEATURE_STATUS.md).
 
-- **Validated**: Gemma/Ollama text runtime, local semantic retrieval, conversation session memory, memory stack hardening, canonical MongoDB events, and ChromaDB indexing.
-- **In progress**: Gemma safety agent, alert delivery, and final mobile validation.
-- **Planned**: caretaker dashboard, demo/submission package polish, and local Gemma frame-sampling vision experiments.
+- **Validated offline**: unified provider resolution/client contracts, structured JSON hardening, provider-specific semantic indexes, media paths, and existing backend contracts.
+- **Next**: capture-pipeline repair (0004), followed by the first live Qwen end-to-end gate (0005).
+- **Planned**: durable memory, lifecycle, proactive turns, voice, submission polish, and the OpenAI provider flip.
 
-## Kaggle Project Description
+## Historical Kaggle Project Description
+
+The following section describes the pre-rebuild Gemma submission and is retained as project history; it is not the current runtime or setup guide.
 
 **Project Memoria is a Gemma-powered dementia support system that helps patients answer memory questions and helps caregivers respond to safety risks at home.**
 

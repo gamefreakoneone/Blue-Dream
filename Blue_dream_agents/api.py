@@ -30,7 +30,7 @@ try:
     )
     from .db_client import close_mongo_client, ensure_events_indexes
     from .jeeves import run_single_query
-    from .llm.ollama_runtime import close_http_client
+    from .llm.client import close_llm_clients
     from .media_paths import to_fs_path
 except ImportError:
     from conversation_memory import (
@@ -50,7 +50,7 @@ except ImportError:
     )
     from db_client import close_mongo_client, ensure_events_indexes
     from jeeves import run_single_query
-    from llm.ollama_runtime import close_http_client
+    from llm.client import close_llm_clients
     from media_paths import to_fs_path
 
 logger = logging.getLogger(__name__)
@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         try:
-            await close_http_client()
+            await close_llm_clients()
         finally:
             await close_mongo_client()
 

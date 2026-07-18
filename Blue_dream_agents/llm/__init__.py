@@ -1,1 +1,1 @@
-"""Shared local Gemma and legacy provider runtime helpers for Blue-Dream."""
+"""Provider-neutral LLM client and configuration for Project Memoria."""

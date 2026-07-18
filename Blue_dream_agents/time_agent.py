@@ -26,7 +26,7 @@ try:
         with_patient_answer_context,
         with_patient_cctv_context,
     )
-    from .llm.strands_runtime import invoke_structured, invoke_text
+    from .llm.client import invoke_structured, invoke_text
     from .memory_schema import (
         MemoryEvent,
         ROOMS,
@@ -44,7 +44,7 @@ except ImportError:
         with_patient_answer_context,
         with_patient_cctv_context,
     )
-    from llm.strands_runtime import invoke_structured, invoke_text
+    from llm.client import invoke_structured, invoke_text
     from memory_schema import (
         MemoryEvent,
         ROOMS,
