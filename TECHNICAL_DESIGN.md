@@ -26,7 +26,7 @@ Memoria has five layers:
 
 ### `MemoryEvent` (MongoDB `events`)
 
-Canonical model in `Blue_dream_agents/memory_schema.py`. Existing fields (`event_id`, `timestamp`, `room_number`, `room_name`, `video_description`, `room_objects`, `audio_transcript`, `screenshot_path`, `video_path`, `audio_path`, `semantic_text`, safety fields) plus lifecycle fields added by spec 0007: `importance` (0–1), `importance_reason`, `pinned`, `lifecycle_status` (`active|consolidated`), `consolidated_into`. Legacy documents are normalized at read time — never bulk-migrated.
+Canonical model in `Blue_dream_agents/memory_schema.py`. Existing fields (`event_id`, `timestamp`, `room_number`, `room_name`, `video_description`, `room_objects`, `audio_transcript`, `screenshot_path`, `video_path`, `audio_path`, `semantic_text`, safety fields) plus lifecycle fields added by spec 0007: `importance` (0–1), `importance_reason`, `pinned`, `lifecycle_status` (`active|consolidated`), `consolidated_into`; plus the optional `video_oss_key` added by spec 0005 (OSS object key of the uploaded video, absent on legacy documents). Legacy documents are normalized at read time — never bulk-migrated.
 
 ### Media paths
 
@@ -78,14 +78,23 @@ One client (`Blue_dream_agents/llm/client.py`, built on `openai.AsyncOpenAI`) se
 | Text: routing/synthesis/judging | `qwen-plus` (routing/judging), `qwen-max` (synthesis — matches spec 0003 presets) | `gpt-5.6` | `gemma4:e2b` |
 | Vision: presence checks | `qwen-vl-max` | `gpt-5.6` | `gemma4:e2b` |
 | Spatial grounding (boxes) | `qwen-vl-max` (stretch) | Gemini fallback | Gemini fallback |
-| Video understanding | `qwen-vl-max` frame sampling (stretch) | Gemini fallback | Gemini fallback |
+| Video understanding | `qwen-vl-max` via presigned OSS video URL (primary); frame-sampling fallback | Gemini fallback | Gemini fallback |
 | Embeddings | `text-embedding-v4` (1024d) | `text-embedding-3-small` (1536d) | `nomic-embed-text` (768d) |
 | Speech-to-text | `qwen3-asr-flash` | `gpt-4o-transcribe` | — (browser fallback) |
 | Text-to-speech | Qwen TTS (verify model in 0005 spike) | `gpt-4o-mini-tts` | — (browser fallback) |
 
-Env surface: `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `VIDEO_PROVIDER=qwen|gemini`, `SPATIAL_PROVIDER=qwen|gemini`, `TRANSCRIBE_PROVIDER=qwen|openai`, `TTS_PROVIDER=qwen|openai|none`; `DASHSCOPE_API_KEY`, `DASHSCOPE_BASE_URL`, `OPENAI_API_KEY`, `OLLAMA_BASE_URL`, `GEMINI_API_KEY`; per-task model overrides (`LLM_TEXT_MODEL`, `LLM_VISION_MODEL`, `LLM_EMBEDDING_MODEL`, `LLM_EMBEDDING_DIM`, ...).
+Env surface: `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `VIDEO_PROVIDER=qwen|gemini`, `SPATIAL_PROVIDER=qwen|gemini`, `TRANSCRIBE_PROVIDER=qwen|openai`, `TTS_PROVIDER=qwen|openai|none`; `DASHSCOPE_API_KEY`, `DASHSCOPE_BASE_URL`, `OPENAI_API_KEY`, `OLLAMA_BASE_URL`, `GEMINI_API_KEY`; OSS video bridge (`OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, `OSS_BUCKET`, `OSS_ENDPOINT`, `OSS_PRESIGN_TTL_SECONDS`); per-task model overrides (`LLM_TEXT_MODEL`, `LLM_VISION_MODEL`, `LLM_EMBEDDING_MODEL`, `LLM_EMBEDDING_DIM`, ...).
 
 Structured-output hardening (JSON fence stripping, embedded-JSON extraction, Pydantic validation, one strict retry) is provider-agnostic and applied on every structured call, with native JSON modes layered on top (`json_object` for DashScope/Ollama, `json_schema` strict structured outputs for GPT-5.6).
+
+### OSS video bridge (spec 0005)
+
+Inline (base64) video to DashScope is capped at 10 MB after encoding; URL-fed video supports far larger files. Recorded event videos are therefore uploaded to a private Alibaba OSS bucket (`memoria`, Singapore/ap-southeast-1 — same region as the DashScope intl endpoint) and consumed by `qwen-vl-max` as a `video_url` content part via a presigned URL. Rules:
+
+- `Blue_dream_agents/oss_media.py` owns the bridge: `upload_video(fs_path) -> object_key` and `presigned_url(object_key, ttl) -> str` (SDK: `oss2`, pinned when spec 0005 lands). The object key mirrors the stored relative POSIX path (e.g. `Storage/video_recordings/camera_0/camera_0_20260718_101500.mp4`), so keys are derivable from `video_path`.
+- Upload happens at ingestion: the consolidator uploads the finished video immediately before the video-understanding call and stores the object key on the event (`video_oss_key`). The local file remains the source of truth; OSS is a transfer bridge for model access, never a media store for the UI (`/storage` static serving is unchanged).
+- The bucket stays private; access is only via presigned URLs with a bounded TTL (`OSS_PRESIGN_TTL_SECONDS`, default 3600).
+- Fallback ladder for `VIDEO_PROVIDER=qwen`: OSS-URL video → OpenCV frame sampling (`frame_sampler.py`, inline image parts) → Gemini (licensed fallback, existing chain preserved). OSS being unreachable degrades video understanding; it never blocks event ingestion.
 
 ### Per-provider Chroma collections
 
@@ -134,7 +143,7 @@ Two implementation cautions for cleanups that *are* wanted: alert/index initiali
 2. `response_format: json_object` support for the chosen text model in compatible mode.
 3. `text-embedding-v4` availability on the compatible-mode `/embeddings` endpoint, its `dimensions` parameter, and the per-request batch limit (chunk `embed_texts` accordingly).
 4. Qwen-VL grounding output: bounding-box coordinate convention (absolute pixels vs 0–1000 normalized) and reliability through compatible mode.
-5. Video-as-frames: whether compatible mode accepts a `video` content part with base64 frames; fallback is multiple `image_url` parts with a sequential-frames prompt.
+5. Video via OSS presigned URL: `oss2` upload + `sign_url` round-trip, then `qwen-vl-max` accepts the presigned URL as a `video_url` content part on the intl endpoint and answers about clip content; record the effective size/duration ceilings for our clips. Only if this fails: verify multiple `image_url` parts with a sequential-frames prompt (the frame-sampling fallback).
 6. ASR/TTS endpoint shapes: OpenAI-style `/audio/*` in compatible mode, or the native `dashscope` SDK (model names for `qwen3-asr-flash` and the current TTS model).
 
 ## Reference Documents

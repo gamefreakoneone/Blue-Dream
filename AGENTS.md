@@ -29,6 +29,7 @@ The project targets two hackathon submissions from one codebase via a hot-swappa
 - Python runs in the `Project-Memoria` conda environment (`conda activate Project-Memoria`). **Never run on base Python** — packages are only installed in `Project-Memoria`. Use it for all Python development and execution; when adding a dependency, pin it in `requirements.txt` in the same change.
 - MongoDB runs locally by default (`MONGODB_URI` overrides).
 - Default provider for the rebuild is `LLM_PROVIDER=qwen` (DashScope key in `.env` as `DASHSCOPE_API_KEY`, with `QWEN_APIKEY` accepted as a fallback name). The OpenAI profile is used only by spec 0012. Ollama is an optional local profile — **not installed on the dev machine**; never make it a prerequisite. The pre-rebuild `.env` runs Bedrock/Nova reasoning until spec 0003 replaces it.
+- An Alibaba OSS bucket (`memoria`, Singapore/ap-southeast-1) holds copies of recorded videos so Qwen video understanding can consume them by presigned URL (inline video is capped at 10 MB). Credentials live in `.env` as `OSS_ACCESS_KEY_ID`/`OSS_ACCESS_KEY_SECRET` with `OSS_BUCKET`/`OSS_ENDPOINT`/`OSS_PRESIGN_TTL_SECONDS`; the `oss2` SDK is pinned when spec 0005 lands. The bucket is a transfer bridge for model access — local files under `Storage/` remain the source of truth.
 - Backend: `uvicorn Blue_dream_agents.api:app --reload` (UI at `http://localhost:8000`).
 - Capture: `python Capture/camera_feed.py`.
 - Tests: `python -m pytest tests/` (the `tests/` scaffold is created by spec 0001; it does not exist before then).
@@ -45,7 +46,7 @@ The project targets two hackathon submissions from one codebase via a hot-swappa
 
 ## Provider Architecture
 
-Target architecture, built by specs 0003 (client) and 0005 (Qwen wiring) — before those specs complete, the legacy dispatch in `Blue_dream_agents/llm/strands_runtime.py`/`ollama_runtime.py` is what actually runs: one async client (`Blue_dream_agents/llm/client.py`, OpenAI SDK) serves text, structured output, vision, video frames, embeddings, ASR, and TTS. `LLM_PROVIDER=qwen|openai|ollama` selects the profile; per-capability env vars override pieces (`EMBEDDING_PROVIDER`, `VIDEO_PROVIDER`, `SPATIAL_PROVIDER`, `TRANSCRIBE_PROVIDER`, `TTS_PROVIDER`). Gemini remains a licensed fallback for video understanding and spatial grounding.
+Target architecture, built by specs 0003 (client) and 0005 (Qwen wiring) — before those specs complete, the legacy dispatch in `Blue_dream_agents/llm/strands_runtime.py`/`ollama_runtime.py` is what actually runs: one async client (`Blue_dream_agents/llm/client.py`, OpenAI SDK) serves text, structured output, vision, video frames, embeddings, ASR, and TTS. `LLM_PROVIDER=qwen|openai|ollama` selects the profile; per-capability env vars override pieces (`EMBEDDING_PROVIDER`, `VIDEO_PROVIDER`, `SPATIAL_PROVIDER`, `TRANSCRIBE_PROVIDER`, `TTS_PROVIDER`). Qwen video understanding runs on presigned OSS video URLs (see the OSS video bridge in `TECHNICAL_DESIGN.md`), degrading to OpenCV frame sampling; Gemini remains a licensed fallback for video understanding and spatial grounding.
 
 Each embedding provider/model gets its own Chroma collection (`memory_events__{provider}__{model_slug}__{dim}`); switching providers rebuilds from MongoDB and never destroys another provider's index.
 

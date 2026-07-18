@@ -9,7 +9,7 @@ Package and submit the Qwen Cloud MemoryAgent entry by **July 20, 2026, 2pm PT**
 - [ ] Project uses Qwen models on Qwen Cloud and fits the MemoryAgent track.
 - [ ] **Public** repository with an open-source license file, visible in the repo About section.
 - [ ] Text description of features and functionality (Devpost form).
-- [ ] **Proof of Alibaba Cloud usage**: a link to a repo code file demonstrating Alibaba Cloud services/APIs — link `Blue_dream_agents/llm/client.py` (DashScope integration) and `scripts/dashscope_spike.py`; plus the ECS deployment evidence if spec 0010 landed.
+- [ ] **Proof of Alibaba Cloud usage**: a link to a repo code file demonstrating Alibaba Cloud services/APIs — link `Blue_dream_agents/llm/client.py` (DashScope integration), `Blue_dream_agents/oss_media.py` (Alibaba OSS video bridge), and `scripts/dashscope_spike.py` (exercises both); plus the ECS deployment evidence if spec 0010 landed. Two Alibaba services (Model Studio + OSS) strengthen the story.
 - [ ] **Architecture diagram** showing how Qwen Cloud connects to backend, database, and frontend.
 - [ ] **Demo video under 3 minutes**, publicly hosted (YouTube), showing the project working.
 - [ ] Track identification: MemoryAgent.
@@ -20,14 +20,14 @@ Package and submit the Qwen Cloud MemoryAgent entry by **July 20, 2026, 2pm PT**
 
 ### README rewrite
 
-- Honest architecture statement: Qwen (via Qwen Cloud/DashScope) owns routing, synthesis, evidence judging, vision presence checks, embeddings — plus grounding/video/ASR where the 0005 stretch landed; Gemini remains a perception fallback where configured; nothing overclaims.
+- Honest architecture statement: Qwen (via Qwen Cloud/DashScope) owns routing, synthesis, evidence judging, vision presence checks, embeddings, ASR, and video understanding (recordings uploaded to Alibaba OSS, consumed by presigned URL) — plus grounding where the 0005 stretch landed; Gemini remains a perception fallback where configured; nothing overclaims.
 - The MemoryAgent story front and center: the four track bullets mapped to the four shipped mechanisms (persistence → durable memory; preferences → profile facts; timely forgetting → lifecycle/consolidation with the "memory hygiene, never erasure" framing; limited-context recall → budgeted packing with `recall_debug`).
 - Setup instructions that actually match the runtime (fresh-clone tested), the Qwen provider profile, and the demo flow.
 - The "significantly updated after May 26" section with the spec ledger and commit anchors.
 
 ### Architecture diagram
 
-- One clean image (draw.io/Excalidraw → PNG committed under `Demo/`): cameras → capture → ingestion → MongoDB/Chroma → Qwen Cloud (models labeled) → FastAPI → web UI (chat/voice/proactive); ECS boundary drawn if 0010 landed.
+- One clean image (draw.io/Excalidraw → PNG committed under `Demo/`): cameras → capture → ingestion → MongoDB/Chroma → Qwen Cloud (models labeled) → FastAPI → web UI (chat/voice/proactive); include the OSS bucket on the ingestion→Qwen video path; ECS boundary drawn if 0010 landed.
 
 ### Demo video (<3 min, YouTube public)
 

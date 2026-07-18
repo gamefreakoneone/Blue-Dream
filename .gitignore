@@ -35,6 +35,7 @@ References/
 text_scripts_for_video/
 
 # Local agent, editor, and OS files
+SESSIONS.md
 .claude/
 .vscode/
 .idea/

@@ -26,6 +26,7 @@ Third-party APIs are allowed in both hackathons (no exclusivity clauses; licensi
 
 - Preserve the existing retrieval architecture: ChromaDB finds semantically similar candidates; MongoDB is the single source of truth for full event records.
 - One async LLM client speaking the OpenAI chat-completions protocol (to be built in spec 0003; does not exist in the current codebase); `LLM_PROVIDER=qwen|openai|ollama` switches the entire app's reasoning, vision, and embedding stack. Qwen is the working provider throughout the rebuild; the openai profile is exercised only in spec 0012; ollama is optional (not installed on the dev machine).
+- Recorded event videos are uploaded at ingestion to a private Alibaba OSS bucket and consumed by Qwen video understanding via presigned URLs (inline video is capped at 10 MB); local files remain canonical and OSS is a transfer bridge for model access, not a media store for the UI.
 - All media paths stored in MongoDB as relative POSIX paths; API responses always return URL paths (`/storage/...`, `/capture/...`); legacy absolute paths normalized at read time.
 - Durable conversation memory: chat sessions persisted in MongoDB with automatic summarization of older turns; survives backend restarts.
 - Profile facts: stable personal facts (people, preferences, routines, medical, safety) extracted from chat, deduplicated, always injected into answer prompts.

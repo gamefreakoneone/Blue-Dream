@@ -9,7 +9,7 @@
 
 ## Spike script: `scripts/dashscope_spike.py`
 
-Standalone, reads `DASHSCOPE_API_KEY` (falling back to `QWEN_APIKEY`, the name in the local `.env`) and `DASHSCOPE_BASE_URL`, runs the seven checks from requirements sequentially, prints PASS/FAIL + raw payload snippets. Commit it — it is also Alibaba-API-usage evidence in the repo.
+Standalone, reads `DASHSCOPE_API_KEY` (falling back to `QWEN_APIKEY`, the name in the local `.env`), `DASHSCOPE_BASE_URL`, and the `OSS_*` vars, runs the nine checks from requirements sequentially, prints PASS/FAIL + raw payload snippets. Commit it — it is Alibaba-API-usage evidence for both DashScope and OSS in the repo.
 
 ## Core wiring (mostly config, by design)
 
@@ -34,10 +34,19 @@ Spec 0003 built the machinery; this spec fills the `qwen` column with **spike-co
 - `object_detector.py` and `alert_service.py` call `spatial.localize_object` instead of importing `gemini_spatial` directly.
 - On any Qwen grounding failure: log + fall through to the Gemini branch when `GEMINI_API_KEY` is present (matches the third-party-fallback posture documented for the submission).
 
-## Stretch 2: frame-sampled video (`VIDEO_PROVIDER=qwen`)
+## Core: OSS-URL video understanding (`VIDEO_PROVIDER=qwen`)
 
-- `Blue_dream_agents/frame_sampler.py`: `sample_frames(video_path, n=12) -> list[Path]` — OpenCV, evenly spaced including first/last frames, JPEGs into a temp dir under `Storage/tmp_frames/` (cleaned after use).
-- `video_agent.py` gains a provider switch: `qwen` → `client.invoke_video_structured(frame_paths=..., output_model=video_results)` with a "these are sequential frames from one room recording" instruction, same output model (`video_description`, `room_objects`, `danger_candidate`, `scene_end_state`, `observed_hazards`, `uncertainties`); `gemini` → existing path (with the 0001 timeout). Qwen failure → Gemini fallback when configured, else partial event (existing behavior).
+- New `Blue_dream_agents/oss_media.py` (SDK: `oss2`, pinned in `requirements.txt` in the same change):
+  - `upload_video(fs_path) -> object_key` — object key mirrors the stored relative POSIX path (derivable from `video_path`); skip re-upload when the key already exists in the bucket.
+  - `presigned_url(object_key, ttl=OSS_PRESIGN_TTL_SECONDS) -> str` — `bucket.sign_url("GET", ...)`; the bucket stays private.
+  - Config from `OSS_ACCESS_KEY_ID`/`OSS_ACCESS_KEY_SECRET`/`OSS_BUCKET`/`OSS_ENDPOINT`; missing config raises a clear error the callers catch to fall back — never a crash, never an ingestion blocker.
+- `consolidator.py`: before the video-understanding call, upload the finished recording and store the returned `video_oss_key` on the `MemoryEvent` (optional field, absent on legacy documents).
+- `video_agent.py` gains a provider switch: `qwen` → presigned URL from `oss_media` → `client.invoke_video_structured(video_url=..., output_model=video_results)`, same output model (`video_description`, `room_objects`, `danger_candidate`, `scene_end_state`, `observed_hazards`, `uncertainties`); `gemini` → existing path (with the 0001 timeout).
+- Fallback ladder on the qwen branch: OSS upload/URL failure → frame sampling (below); Qwen model failure → Gemini fallback when configured, else partial event (existing behavior).
+
+### Fallback: frame sampling
+
+- `Blue_dream_agents/frame_sampler.py`: `sample_frames(video_path, n=12) -> list[Path]` — OpenCV, evenly spaced including first/last frames, JPEGs into a temp dir under `Storage/tmp_frames/` (cleaned after use); sent via `invoke_video_structured(frame_paths=...)` with a "these are sequential frames from one room recording" instruction.
 
 ## Config documentation
 
@@ -48,14 +57,20 @@ Spec 0003 built the machinery; this spec fills the `qwen` column with **spike-co
 # EMBEDDING_PROVIDER=qwen
 # TRANSCRIBE_PROVIDER=qwen
 # SPATIAL_PROVIDER=qwen        # stretch; gemini fallback
-# VIDEO_PROVIDER=qwen          # stretch; gemini fallback
+# VIDEO_PROVIDER=qwen          # OSS-URL primary; frame-sampling then gemini fallback
 # DASHSCOPE_API_KEY=...
 # DASHSCOPE_BASE_URL=<spike-confirmed>
+# OSS_ACCESS_KEY_ID=...
+# OSS_ACCESS_KEY_SECRET=...
+# OSS_BUCKET=memoria
+# OSS_ENDPOINT=oss-ap-southeast-1.aliyuncs.com
+# OSS_PRESIGN_TTL_SECONDS=3600
 ```
 
 ## Tests
 
 - Extend `tests/test_registry.py`: qwen preset resolution, missing-key error.
+- `tests/test_oss_media.py`: object-key derivation from `video_path`, missing-config error, presign call shape (mocked `oss2`, no network); video-agent fallback trigger to frame sampling on OSS failure (mocked).
 - `tests/test_spatial_dispatch.py`: provider dispatch + coordinate conversion for both conventions (pure math, no network); Gemini-fallback trigger on qwen failure (mocked).
 - `tests/test_frame_sampler.py`: sample count/order on a tiny generated clip (or skip-marked if OpenCV video write unavailable in CI).
 
@@ -66,4 +81,4 @@ conda run -n Project-Memoria python scripts/dashscope_spike.py          # record
 conda run -n Project-Memoria python -m pytest tests/ -q
 ```
 
-Live with `LLM_PROVIDER=qwen EMBEDDING_PROVIDER=qwen` — **this is the first live end-to-end validation of the provider layer** (the checks deferred from spec 0003): `/query` × 4 route types; Chroma qwen collection built from Mongo (log the indexed count); one Qwen transcription run. Stretch: one screenshot highlight via Qwen-VL compared side-by-side with the Gemini output; one frame-sampled video description compared with the stored Gemini description.
+Live with `LLM_PROVIDER=qwen EMBEDDING_PROVIDER=qwen` — **this is the first live end-to-end validation of the provider layer** (the checks deferred from spec 0003): `/query` × 4 route types; Chroma qwen collection built from Mongo (log the indexed count); one Qwen transcription run; one stored video through the OSS-URL path (`video_oss_key` on the event, description compared with the stored Gemini description). Stretch: one screenshot highlight via Qwen-VL compared side-by-side with the Gemini output.

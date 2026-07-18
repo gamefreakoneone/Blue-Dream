@@ -2,7 +2,7 @@
 
 ## Goal
 
-Wire Qwen models on Qwen Cloud (DashScope) into the provider layer so `LLM_PROVIDER=qwen` runs the entire reasoning stack — routing, synthesis, evidence judging, vision presence checks, and semantic embeddings — on Qwen. This is the eligibility core of the Qwen Cloud MemoryAgent submission. A mandatory verification spike runs FIRST and gates every dependent decision.
+Wire Qwen models on Qwen Cloud (DashScope) into the provider layer so `LLM_PROVIDER=qwen` runs the entire reasoning stack — routing, synthesis, evidence judging, vision presence checks, video understanding (via the OSS video bridge), and semantic embeddings — on Qwen. This is the eligibility core of the Qwen Cloud MemoryAgent submission. A mandatory verification spike runs FIRST and gates every dependent decision.
 
 ## The Spike (do this before any wiring — timebox ~45 minutes)
 
@@ -15,6 +15,8 @@ Small throwaway script (`scripts/dashscope_spike.py`, committed for the record) 
 5. `qwen-vl-max` with one base64 image: presence check works? Then a grounding prompt: what bounding-box format and coordinate convention (absolute pixels vs 0–1000 normalized) does it return?
 6. Multiple images as sequential frames in one request: accepted? request-size limit encountered?
 7. ASR: does compatible mode expose OpenAI-style `/audio/transcriptions`? If not, verify the native `dashscope` SDK call for `qwen3-asr-flash` (or the current ASR model). TTS: identify the working TTS model + call shape (needed by spec 0009).
+8. OSS video round-trip: `oss2` upload of one stored recording to the `memoria` bucket + `sign_url` presigned URL; then `qwen-vl-max` accepts that URL as a `video_url` content part and answers a question about clip content.
+9. Record the effective video size/duration ceilings for URL input against our typical clip sizes (inline base64 is capped at 10 MB — the reason for the OSS bridge).
 
 Record every answer in this spec's `status.md` before proceeding. If a capability fails, apply the documented fallback rather than fighting it.
 
@@ -24,14 +26,15 @@ Record every answer in this spec's `status.md` before proceeding. If a capabilit
 - `EMBEDDING_PROVIDER=qwen` embeds via DashScope; the Chroma collection `memory_events__qwen__{model}__{dim}` builds from MongoDB and serves semantic recall.
 - `TRANSCRIBE_PROVIDER=qwen` transcribes ingestion audio via DashScope (compatible-mode `/audio` or native `dashscope` SDK per the spike); OpenAI remains the fallback config.
 - Structured-output hardening applies unchanged; if JSON mode is unsupported for a model, the schema-in-prompt + extraction path carries it.
+- `VIDEO_PROVIDER=qwen`: the consolidator uploads the finished video to the private OSS bucket at ingestion (`Blue_dream_agents/oss_media.py`, key mirrors the stored relative path, `video_oss_key` saved on the event) and `video_agent.py` feeds a presigned URL to `qwen-vl-max` via `invoke_video_structured(video_url=...)`. Fallback ladder: OSS-URL video → OpenCV frame sampling (8–16 frames, inline image parts) → Gemini. OSS being unreachable degrades video understanding; it never blocks event ingestion.
 - Stretch (explicit cut line — skip without guilt if the schedule slips):
   - `SPATIAL_PROVIDER=qwen`: Qwen-VL grounding replaces Gemini for object-highlight bounding boxes, with the coordinate convention from the spike; Gemini remains the fallback.
-  - `VIDEO_PROVIDER=qwen`: OpenCV frame sampling (8–16 frames) + `invoke_video_structured` replaces Gemini full-video analysis; Gemini remains the default until this validates.
 
 ## Technical Constraints
 
 - All calls go through `llm/client.py`; no module talks to DashScope directly except a possible thin native-SDK ASR/TTS helper inside the llm package (if compatible mode lacks audio endpoints).
-- If the native `dashscope` SDK is needed, pin it in `requirements.txt`.
+- If the native `dashscope` SDK is needed, pin it in `requirements.txt`. Pin `oss2` in the same change that introduces `oss_media.py`.
+- The OSS bucket stays private; videos are reachable only through presigned URLs with a bounded TTL (`OSS_PRESIGN_TTL_SECONDS`). Credentials come from `OSS_ACCESS_KEY_ID`/`OSS_ACCESS_KEY_SECRET` (+ `OSS_BUCKET`, `OSS_ENDPOINT`) in `.env`; a missing OSS config produces a clear log + fallback, never a crash.
 - Never delete or overwrite any other provider's Chroma collections.
 
 ## Non-Requirements
@@ -44,5 +47,6 @@ Record every answer in this spec's `status.md` before proceeding. If a capabilit
 - Spike findings recorded in `status.md` with working example payloads.
 - With `LLM_PROVIDER=qwen` + `EMBEDDING_PROVIDER=qwen`: all four `/query` route types answer correctly end-to-end; semantic recall returns grounded answers from the Qwen collection.
 - One ingestion run (or re-ingest of a stored video) completes with Qwen transcription when `TRANSCRIBE_PROVIDER=qwen`.
-- Stretch, if attempted: one stored screenshot produces a correct Qwen-VL highlight box on a known object; one stored video produces a usable frame-sampled description.
+- With `VIDEO_PROVIDER=qwen`: one stored video is uploaded to OSS and produces a usable Qwen video description via the presigned-URL path, with `video_oss_key` recorded on the event.
+- Stretch, if attempted: one stored screenshot produces a correct Qwen-VL highlight box on a known object.
 - Full pytest suite passes with mocked providers (no live-key dependence in CI-style runs).
