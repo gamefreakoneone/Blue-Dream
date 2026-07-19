@@ -2,6 +2,9 @@ import asyncio
 import threading
 
 from Blue_dream_agents import alert_service
+from Blue_dream_agents.memory_schema import MemoryEvent
+from Blue_dream_agents.safety_agent import SafetyAssessment
+from Blue_dream_agents.timezone_utils import now_local
 
 
 class FakeInsertResult:
@@ -98,6 +101,107 @@ def test_fall_alert_persists_before_caretaker_delivery(monkeypatch):
     assert inserted["image_path"] == "Storage/screenshots/fall.jpg"
     assert result["delivery_status"] == "not_configured"
     assert result["image_path"] == "/storage/screenshots/fall.jpg"
+
+
+def test_patient_alert_survives_proactive_trigger_failure(monkeypatch):
+    events = []
+    collection = FakeAlertCollection(events=events)
+
+    async def noop_indexes():
+        return None
+
+    async def fail_proactive(**kwargs):
+        events.append("proactive")
+        raise RuntimeError("proactive unavailable")
+
+    async def deliver(alert):
+        events.append("deliver")
+        return {"status": "not_configured"}
+
+    monkeypatch.setattr(alert_service, "initialize_alert_indexes", noop_indexes)
+    monkeypatch.setattr(
+        alert_service, "get_safety_alerts_collection", lambda: collection
+    )
+    monkeypatch.setattr(alert_service, "create_proactive_message", fail_proactive)
+    monkeypatch.setattr(alert_service, "deliver_patient_alert", deliver)
+
+    result = asyncio.run(
+        alert_service.create_alert(
+            alert_type="hazard",
+            severity="high",
+            target_role="patient",
+            title="Kitchen warning",
+            body="Please return to the kitchen.",
+            room_number=1,
+            room_name="Living Room",
+            screenshot_path="Storage/highlighted/stove.jpg",
+        )
+    )
+
+    assert events == ["insert", "proactive", "deliver", "update"]
+    assert collection.documents[0]["body"] == "Please return to the kitchen."
+    assert result["delivery_status"] == "not_configured"
+
+
+def test_safety_assessment_creates_proactive_warning_with_image(monkeypatch):
+    collection = FakeAlertCollection()
+    proactive_calls = []
+
+    async def noop_indexes():
+        return None
+
+    async def proactive(**kwargs):
+        proactive_calls.append(kwargs)
+        return "pm_safety"
+
+    async def deliver(alert):
+        return {"status": "not_configured"}
+
+    monkeypatch.setattr(alert_service, "initialize_alert_indexes", noop_indexes)
+    monkeypatch.setattr(
+        alert_service, "get_safety_alerts_collection", lambda: collection
+    )
+    monkeypatch.setattr(alert_service, "create_proactive_message", proactive)
+    monkeypatch.setattr(alert_service, "deliver_patient_alert", deliver)
+
+    event = MemoryEvent(
+        event_id="event-hazard",
+        timestamp=now_local(),
+        room_number=1,
+        room_name="Living Room",
+        semantic_text="The stove was left on.",
+        screenshot_path="Storage/screenshots/stove.jpg",
+    )
+    assessment = SafetyAssessment(
+        warning_needed=True,
+        severity="high",
+        hazard_type="stove_on",
+        confidence=0.95,
+        patient_message="Please return to the kitchen and turn off the stove.",
+    )
+
+    async def build_alert(event, assessment):
+        return {
+            "alert_id": "alert-hazard",
+            "event_id": event.event_id,
+            "target_role": "patient",
+            "severity": assessment.severity,
+            "body": assessment.patient_message,
+            "image_path": "Storage/highlighted/stove.jpg",
+            "status": "open",
+        }
+
+    monkeypatch.setattr(alert_service, "build_alert_document", build_alert)
+    asyncio.run(alert_service.create_alert_for_safety_assessment(event, assessment))
+
+    assert proactive_calls == [
+        {
+            "trigger_type": "safety",
+            "text": "Please return to the kitchen and turn off the stove.",
+            "image_path": "Storage/highlighted/stove.jpg",
+            "related_id": "alert-hazard",
+        }
+    ]
 
 
 def test_caretaker_email_runs_off_event_loop_thread(monkeypatch):

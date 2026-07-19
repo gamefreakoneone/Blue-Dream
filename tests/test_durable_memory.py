@@ -514,7 +514,7 @@ def test_matchable_event_reminder_date_window_and_overnight():
 
     morning = _run(
         service.get_matchable_events(
-            dt.datetime(2026, 7, 18, 6, 0, tzinfo=LOCAL_TZ)
+            dt.datetime(2026, 7, 18, 6, 0, tzinfo=LOCAL_TZ), room_number=1
         )
     )
     assert {item["text"] for item in morning} == {"today", "daily"}
@@ -522,7 +522,7 @@ def test_matchable_event_reminder_date_window_and_overnight():
 
     overnight = _run(
         service.get_matchable_events(
-            dt.datetime(2026, 7, 18, 23, 30, tzinfo=LOCAL_TZ)
+            dt.datetime(2026, 7, 18, 23, 30, tzinfo=LOCAL_TZ), room_number=4
         )
     )
     assert [item["text"] for item in overnight] == ["overnight"]

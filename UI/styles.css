@@ -479,6 +479,41 @@ header {
     align-items: flex-start;
 }
 
+.message.proactive {
+    max-width: min(86%, 620px);
+}
+
+.proactive-label {
+    color: #0f766e;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    margin: 0 0 5px 10px;
+    text-transform: uppercase;
+}
+
+.proactive .bubble {
+    background: linear-gradient(135deg, #ecfdf5, #f0fdfa);
+    border: 1px solid rgba(13, 148, 136, 0.22);
+    box-shadow: 0 8px 24px rgba(13, 148, 136, 0.08);
+}
+
+.proactive-action {
+    background-color: #0f766e;
+    border-radius: 999px;
+    color: white;
+    display: inline-flex;
+    font-size: 14px;
+    font-weight: 600;
+    margin-top: 10px;
+    padding: 9px 15px;
+    text-decoration: none;
+}
+
+.proactive-action:hover {
+    background-color: #115e59;
+}
+
 .bubble {
     padding: 14px 20px;
     border-radius: var(--border-radius);

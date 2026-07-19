@@ -15,6 +15,7 @@ from .llm.settings import get_provider_settings
 from .llm.client import invoke_structured
 from .llm.model_registry import get_model_registry
 from .oss_media import upload_video
+from .proactive_service import maybe_event_reminders, maybe_morning_report
 from .semantic_search import index_memory_event
 from .safety_agent import assess_event_safety, empty_safety_assessment
 from .alert_service import create_alert_for_safety_assessment
@@ -243,6 +244,24 @@ async def consolidator_agent(
     except Exception as exc:
         logger.warning(
             "Safety alert creation failed for event %s but ingestion will continue: %s",
+            event.event_id,
+            exc,
+        )
+
+    try:
+        await maybe_morning_report(event.timestamp)
+    except Exception as exc:
+        logger.warning(
+            "Morning-report trigger failed for event %s but ingestion will continue: %s",
+            event.event_id,
+            exc,
+        )
+
+    try:
+        await maybe_event_reminders(event)
+    except Exception as exc:
+        logger.warning(
+            "Event-reminder trigger failed for event %s but ingestion will continue: %s",
             event.event_id,
             exc,
         )

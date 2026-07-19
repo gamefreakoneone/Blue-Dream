@@ -162,6 +162,8 @@ class ProviderSettings(BaseModel):
     consolidate_on_startup: bool = False
     recall_half_life_days: float = 14.0
     recall_token_budget: int = 2000
+    proactive_expiry_minutes: int = 60
+    event_reminder_llm_match: bool = True
     safety_agent_enabled: bool = True
     safety_alert_min_severity: str = "medium"
     firebase_project_id: Optional[str] = None
@@ -258,6 +260,12 @@ def get_provider_settings() -> ProviderSettings:
         consolidate_on_startup=_env_bool("CONSOLIDATE_ON_STARTUP", False),
         recall_half_life_days=_env_positive_float("RECALL_HALF_LIFE_DAYS", 14.0),
         recall_token_budget=_env_positive_int("RECALL_TOKEN_BUDGET", 2000),
+        proactive_expiry_minutes=_env_positive_int(
+            "PROACTIVE_EXPIRY_MINUTES", 60
+        ),
+        event_reminder_llm_match=_env_bool(
+            "EVENT_REMINDER_LLM_MATCH", True
+        ),
         safety_agent_enabled=_env_bool("SAFETY_AGENT_ENABLED", True),
         safety_alert_min_severity=os.getenv(
             "SAFETY_ALERT_MIN_SEVERITY", "medium"

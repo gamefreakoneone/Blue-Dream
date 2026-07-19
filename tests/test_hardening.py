@@ -163,6 +163,14 @@ def test_consolidator_timeout_persists_partial_audio(monkeypatch):
     async def noop(*args, **kwargs):
         return None
 
+    async def trigger_failure(*args, **kwargs):
+        raise RuntimeError("proactive trigger unavailable")
+
+    indexed = []
+
+    async def record_index(event):
+        indexed.append(event.event_id)
+
     async def assess(*args, **kwargs):
         return empty_safety_assessment("test")
 
@@ -172,7 +180,9 @@ def test_consolidator_timeout_persists_partial_audio(monkeypatch):
     monkeypatch.setattr(consolidator, "Audio_agent", AudioStub)
     monkeypatch.setattr(consolidator, "assess_event_safety", assess)
     monkeypatch.setattr(consolidator, "create_alert_for_safety_assessment", noop)
-    monkeypatch.setattr(consolidator, "index_memory_event", noop)
+    monkeypatch.setattr(consolidator, "maybe_morning_report", trigger_failure)
+    monkeypatch.setattr(consolidator, "maybe_event_reminders", trigger_failure)
+    monkeypatch.setattr(consolidator, "index_memory_event", record_index)
 
     result = asyncio.run(
         consolidator.consolidator_agent(
@@ -189,6 +199,7 @@ def test_consolidator_timeout_persists_partial_audio(monkeypatch):
     assert document["video_description"] == "Video analysis unavailable for this recording."
     assert document["video_oss_key"] == "Storage/video_recordings/camera_1/video.mp4"
     assert document["audio_transcript"] == "The patient asked where the keys were."
+    assert indexed == [document["event_id"]]
 
 
 def test_consolidator_duplicate_does_not_reprocess_or_insert(monkeypatch):
@@ -216,6 +227,8 @@ def test_consolidator_duplicate_does_not_reprocess_or_insert(monkeypatch):
     monkeypatch.setattr(consolidator, "ensure_events_indexes", noop)
     monkeypatch.setattr(consolidator, "get_events_collection", lambda: collection)
     monkeypatch.setattr(consolidator, "Audio_agent", MustNotConstruct)
+    monkeypatch.setattr(consolidator, "maybe_morning_report", noop)
+    monkeypatch.setattr(consolidator, "maybe_event_reminders", noop)
     monkeypatch.setattr(consolidator, "index_memory_event", noop)
 
     result = asyncio.run(

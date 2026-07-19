@@ -79,6 +79,11 @@ def get_memory_summaries_collection():
     return get_mongo_client().dementia_assistance.memory_summaries
 
 
+def get_proactive_messages_collection():
+    """Return the durable agent-initiated message collection."""
+    return get_mongo_client().dementia_assistance.proactive_messages
+
+
 async def ensure_events_indexes() -> None:
     """Create MongoDB indexes used by ingestion and retrieval paths."""
 
@@ -162,4 +167,20 @@ async def ensure_reminder_indexes() -> None:
     await reminders.create_index(
         [("status", 1), ("trigger_type", 1)],
         name="status_1_trigger_type_1",
+    )
+
+
+async def ensure_proactive_indexes() -> None:
+    """Create indexes used for global delivery and trigger deduplication."""
+
+    messages = get_proactive_messages_collection()
+    await messages.create_index(
+        [("status", 1), ("created_at", 1)],
+        name="status_1_created_at_1",
+    )
+    await messages.create_index(
+        [("related_id", 1)],
+        name="related_id_1",
+        unique=True,
+        partialFilterExpression={"related_id": {"$type": "string"}},
     )

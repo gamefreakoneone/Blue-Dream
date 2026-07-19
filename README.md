@@ -18,6 +18,7 @@ Memoria is designed around one practical idea: use local, grounded AI to help pa
 - **Current-state object finding**: The assistant checks the latest room snapshots first, then falls back to historical memory when the object is not currently visible.
 - **Semantic recall**: Past room events are normalized into canonical memory records, embedded through the configured provider, and indexed in ChromaDB for evidence retrieval.
 - **Durable patient memory**: Conversation context, stable profile facts, and patient-created reminders survive backend restarts in MongoDB without entering the monitoring-evidence index.
+- **Proactive patient guidance**: Safety warnings, morning reports, and time- or event-triggered reminders appear as agent-initiated web chat turns.
 - **Safety reasoning prototype**: Factual observations from room events can be judged for patient-actionable risks, such as unattended cooking or ambiguous hazards.
 - **Patient web UI**: FastAPI serves a lightweight Memoria chat interface at `http://localhost:8000`.
 - **Expo mobile app**: The React Native app supports chat, New Chat, alert list/detail screens, acknowledgement actions, geofence guidance, deep links, and notification scaffolding.
@@ -45,8 +46,8 @@ Full-video Qwen analysis uses a private Alibaba OSS presigned URL because inline
 4. A patient asks, "Where are my keys?" or "What was I doing today?"
 5. The configured model routes the query, judges evidence quality, and synthesizes a grounded response.
 6. If the object is present in a current-room image, Memoria sends that image to the configured spatial provider for highlighting.
-7. If a safety event is detected, the configured model judges whether the patient or caregiver should be alerted.
-8. The mobile app can show the alert detail, acknowledgement actions, and geofence guidance.
+7. If a safety event is detected, the configured model judges whether the patient or caregiver should be alerted; actionable patient warnings enter the proactive channel.
+8. The web app polls for proactive safety, morning-report, and reminder turns while the mobile app continues to show alert detail, acknowledgement, and geofence guidance.
 
 ## Architecture
 
@@ -61,6 +62,7 @@ At a high level:
 5. `Blue_dream_agents/api.py` serves the web UI, mobile-compatible APIs, and static media.
 6. `Blue_dream_agents/jeeves.py` routes patient queries through object, time, semantic, and general response flows.
 7. `Blue_dream_agents/safety_agent.py` and `Blue_dream_agents/alert_service.py` support safety decisions and alert records.
+8. `Blue_dream_agents/proactive_service.py` deduplicates, expires, and globally delivers agent-initiated patient messages.
 
 ## Current Stack
 
@@ -69,6 +71,7 @@ At a high level:
 - **Durable event store**: MongoDB `dementia_assistance.events`
 - **Alert store**: MongoDB `dementia_assistance.safety_alerts`
 - **Durable working memory**: MongoDB `conversation_sessions`, `profile_facts`, and `reminders`
+- **Proactive message store**: MongoDB `proactive_messages`
 - **Semantic index**: ChromaDB collections named `memory_events__{provider}__{model_slug}__{dim}`
 - **Video perception**: `qwen3-vl-flash` via private OSS URL; full-video Gemini fallback
 - **Spatial highlighting**: `qwen3-vl-plus`; Gemini fallback
@@ -189,6 +192,10 @@ RECALL_TOKEN_BUDGET=2000
 CONVERSATION_MAX_TURNS=12
 PROFILE_MAX_ACTIVE_FACTS=50
 
+# Agent-initiated web-chat delivery and event-reminder matching
+PROACTIVE_EXPIRY_MINUTES=60
+EVENT_REMINDER_LLM_MATCH=true
+
 # Database
 MONGODB_URI=mongodb://localhost:27017
 TIMEZONE=America/Los_Angeles
@@ -251,6 +258,21 @@ an event through `POST /memory/events/{event_id}/pin` keeps it individually
 recallable, while `/unpin` makes it eligible for later consolidation. Semantic
 answers rank evidence by relevance, recency, and importance within the configured
 recall budget and expose the packed evidence in the web UI's “Memory used” panel.
+
+### Proactive channel
+
+The patient web app polls every five seconds for globally pending agent-initiated
+messages. Actionable safety alerts, the first camera event's morning report, due
+time reminders, and matching event reminders become distinct "Memoria noticed"
+chat turns. Messages expire after `PROACTIVE_EXPIRY_MINUTES`; expired warnings are
+never delivered, and the first browser session to claim a message owns its global
+delivery. When `EVENT_REMINDER_LLM_MATCH=true`, the configured judge verifies the
+event condition after the deterministic room/date/window prefilter. A disabled or
+failed judge falls back to that deterministic match.
+
+Event reminders appear after a recording ends and full video processing completes,
+typically about a minute after the patient leaves the frame. This latency is expected
+for the leaving-the-house demo beat.
 
 ## Running the System
 
@@ -361,7 +383,19 @@ POST /reminders
 POST /reminders/{reminder_id}/done
 ```
 
-Profile facts are extracted after chat responses, deduplicated, and injected into general-chat and grounded synthesis prompts. Reminder creation accepts either a time trigger (`due_at`, optional daily recurrence) or an event trigger containing a room, local-time window, behavior condition, and optional valid date. Delivery and camera-event matching arrive in spec 0008.
+Profile facts are extracted after chat responses, deduplicated, and injected into general-chat and grounded synthesis prompts. Reminder creation accepts either a time trigger (`due_at`, optional daily recurrence) or an event trigger containing a room, local-time window, behavior condition, and optional valid date. The proactive channel delivers due reminders and matches ingested camera events.
+
+### Proactive Messages
+
+```text
+GET  /proactive/pending?session_id=<browser-session-id>
+POST /proactive/{message_id}/ack
+```
+
+Polling atomically claims unexpired messages across all browser sessions. Supplying
+`session_id` appends each delivered message as an assistant turn so follow-up
+questions retain the proactive context. The web UI acknowledges a message after it
+renders.
 
 ### Mobile Alerts
 
@@ -433,8 +467,9 @@ The first geofence implementation is intentionally prototype-simple: the backend
 Current overhaul status is tracked in [`docs/FEATURE_STATUS.md`](docs/FEATURE_STATUS.md).
 
 - **Validated offline**: unified provider resolution/client contracts, structured JSON hardening, provider-specific semantic indexes, media paths, and existing backend contracts.
-- **Current**: spec 0006 durable conversation, profile, and reminder memory.
-- **Planned**: memory lifecycle, proactive turns, voice, submission polish, and the OpenAI provider flip.
+- **Validated**: specs 0006-0008 durable memory, memory lifecycle, and proactive turns.
+- **Next**: spec 0009 voice agent (not started by this change).
+- **Planned**: voice, submission polish, optional Alibaba deployment, and the OpenAI provider flip.
 
 ## Historical Kaggle Project Description
 

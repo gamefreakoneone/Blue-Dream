@@ -29,6 +29,7 @@ try:
         to_url_path,
     )
     from .memory_schema import MemoryEvent
+    from .proactive_service import create_message as create_proactive_message
     from .safety_agent import SafetyAssessment
     from .timezone_utils import now_local
 except ImportError:
@@ -48,6 +49,7 @@ except ImportError:
         to_url_path,
     )
     from memory_schema import MemoryEvent
+    from proactive_service import create_message as create_proactive_message
     from safety_agent import SafetyAssessment
     from timezone_utils import now_local
 
@@ -346,6 +348,13 @@ async def create_alert_for_safety_assessment(
     alert = await build_alert_document(event, assessment)
     await get_safety_alerts_collection().insert_one(alert)
     try:
+        await _create_proactive_for_alert(alert)
+    except Exception:
+        logger.exception(
+            "Proactive safety message failed for alert %s; alert remains stored",
+            alert["alert_id"],
+        )
+    try:
         delivery_status = await deliver_patient_alert(alert)
     except Exception as exc:
         logger.warning("Patient alert delivery failed for %s: %s", alert["alert_id"], exc)
@@ -368,6 +377,24 @@ async def create_alert_for_safety_assessment(
         }
     )
     return serialize_alert(alert)
+
+
+async def _create_proactive_for_alert(alert: dict[str, Any]) -> None:
+    """Create a proactive turn only for actionable patient safety alerts."""
+
+    if alert.get("target_role") != "patient":
+        return
+    settings = get_provider_settings()
+    if not _severity_allows_alert(
+        str(alert.get("severity") or "none"), settings.safety_alert_min_severity
+    ):
+        return
+    await create_proactive_message(
+        trigger_type="safety",
+        text=str(alert.get("body") or alert.get("message") or "Please stay safe."),
+        image_path=str(alert.get("image_path") or "") or None,
+        related_id=str(alert.get("alert_id") or "") or None,
+    )
 
 
 def _gmail_credentials_available() -> bool:
@@ -483,6 +510,14 @@ async def create_alert(
         "updated_at": now,
     }
     await get_safety_alerts_collection().insert_one(alert)
+
+    try:
+        await _create_proactive_for_alert(alert)
+    except Exception:
+        logger.exception(
+            "Proactive safety message failed for alert %s; alert remains stored",
+            alert_id,
+        )
 
     try:
         if target_role == "caretaker":

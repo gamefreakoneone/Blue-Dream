@@ -15,11 +15,14 @@ const RESET_URL = '/conversation/reset';
 const GEOFENCE_URL = '/geofence/current';
 const GEOFENCE_EVENTS_URL = '/geofence/events';
 const ALERTS_URL = '/alerts/patient?status=open';
+const PROACTIVE_URL = '/proactive/pending';
+const PROACTIVE_POLL_SECONDS = 5;
 const SESSION_STORAGE_KEY = 'memoriaConversationSessionId';
 
 let conversationSessionId = getOrCreateSessionId();
 let currentGeofence = null;
 let currentAlert = null;
+let proactivePollInFlight = false;
 
 function createSessionId() {
     if (window.crypto && typeof window.crypto.randomUUID === 'function') {
@@ -129,7 +132,83 @@ if (simulateExitBtn) {
 
 document.addEventListener('DOMContentLoaded', () => {
     refreshEmergencyDemo();
+    pollProactive();
+    window.setInterval(pollProactive, PROACTIVE_POLL_SECONDS * 1000);
 });
+
+async function pollProactive() {
+    if (proactivePollInFlight) return;
+    proactivePollInFlight = true;
+    try {
+        const query = new URLSearchParams({ session_id: conversationSessionId });
+        const payload = await fetchJson(`${PROACTIVE_URL}?${query.toString()}`);
+        const messages = Array.isArray(payload.messages) ? payload.messages : [];
+        for (const message of messages) {
+            renderProactiveMessage(message);
+            try {
+                await fetchJson(
+                    `/proactive/${encodeURIComponent(message.message_id)}/ack`,
+                    { method: 'POST' }
+                );
+            } catch (error) {
+                console.error('Could not acknowledge proactive message:', error);
+            }
+        }
+    } catch (error) {
+        console.error('Proactive message poll failed:', error);
+    } finally {
+        proactivePollInFlight = false;
+    }
+}
+
+function safeActionUrl(value) {
+    try {
+        const parsed = new URL(String(value || ''), window.location.origin);
+        return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function renderProactiveMessage(message) {
+    const messageDiv = document.createElement('div');
+    messageDiv.classList.add('message', 'bot', 'proactive');
+    messageDiv.dataset.messageId = String(message.message_id || '');
+
+    const noticedLabel = document.createElement('div');
+    noticedLabel.className = 'proactive-label';
+    noticedLabel.textContent = 'Memoria noticed';
+    messageDiv.appendChild(noticedLabel);
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.textContent = String(message.text || '');
+    messageDiv.appendChild(bubble);
+
+    if (message.image_path) {
+        const img = document.createElement('img');
+        img.src = message.image_path;
+        img.alt = 'What Memoria noticed';
+        img.className = 'message-image';
+        img.onload = scrollToBottom;
+        img.onerror = () => { img.style.display = 'none'; };
+        messageDiv.appendChild(img);
+    }
+
+    const actionUrl = safeActionUrl(message.action?.url);
+    if (actionUrl && message.action?.label) {
+        const action = document.createElement('a');
+        action.className = 'proactive-action';
+        action.href = actionUrl;
+        action.target = '_blank';
+        action.rel = 'noopener noreferrer';
+        action.textContent = String(message.action.label);
+        messageDiv.appendChild(action);
+    }
+
+    chatContainer.appendChild(messageDiv);
+    scrollToBottom();
+}
 
 async function fetchJson(url, options = {}) {
     const response = await fetch(url, {
@@ -404,6 +483,7 @@ function addMessage(text, sender, imagePath = null, recallDebug = null) {
         img.src = imagePath;
         img.alt = 'Search Result';
         img.classList.add('message-image');
+        img.onload = scrollToBottom;
         img.onerror = () => { img.style.display = 'none'; bubble.textContent += ' [Image failed to load]'; };
         
         messageDiv.appendChild(img);

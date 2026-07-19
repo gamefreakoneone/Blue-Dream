@@ -48,12 +48,19 @@ try:
         get_active_facts,
         pin_fact,
     )
+    from .proactive_service import (
+        acknowledge as acknowledge_proactive,
+        check_due_reminders,
+        get_pending as get_pending_proactive,
+        initialize_proactive_indexes,
+    )
     from .reminder_service import (
         ReminderCreate,
         create_reminder,
         list_active as list_active_reminders,
         mark_done,
     )
+    from .timezone_utils import now_local
 except ImportError:
     from conversation_memory import (
         append_conversation_turn,
@@ -89,12 +96,19 @@ except ImportError:
         get_active_facts,
         pin_fact,
     )
+    from proactive_service import (
+        acknowledge as acknowledge_proactive,
+        check_due_reminders,
+        get_pending as get_pending_proactive,
+        initialize_proactive_indexes,
+    )
     from reminder_service import (
         ReminderCreate,
         create_reminder,
         list_active as list_active_reminders,
         mark_done,
     )
+    from timezone_utils import now_local
 
 logger = logging.getLogger(__name__)
 GENERIC_ERROR_DETAIL = "Something went wrong. Please try again in a moment."
@@ -116,6 +130,7 @@ async def lifespan(app: FastAPI):
         await ensure_profile_indexes()
         await ensure_reminder_indexes()
         await ensure_memory_lifecycle_indexes()
+        await initialize_proactive_indexes()
     except Exception as exc:
         logger.warning("MongoDB index setup skipped or failed: %s", exc)
 
@@ -344,6 +359,61 @@ async def complete_reminder(reminder_id: str):
         raise
     except Exception:
         logger.exception("Reminder completion failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
+@app.get("/proactive/pending")
+async def get_proactive_messages(session_id: Optional[str] = None):
+    try:
+        now = now_local()
+        try:
+            await check_due_reminders(now)
+        except Exception:
+            logger.exception(
+                "Poll-driven reminder check failed; returning existing proactive messages"
+            )
+        messages = await get_pending_proactive(now)
+        if session_id:
+            for message in messages:
+                try:
+                    await append_conversation_turn(
+                        session_id, "assistant", str(message.get("text") or "")
+                    )
+                except Exception:
+                    logger.exception(
+                        "Could not append proactive message %s to session %s",
+                        message.get("message_id"),
+                        session_id,
+                    )
+        public_fields = (
+            "message_id",
+            "trigger_type",
+            "text",
+            "image_path",
+            "action",
+            "created_at",
+        )
+        return {
+            "messages": [
+                {field: message.get(field) for field in public_fields}
+                for message in messages
+            ]
+        }
+    except Exception:
+        logger.exception("Proactive pending-message poll failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
+@app.post("/proactive/{message_id}/ack")
+async def acknowledge_proactive_message(message_id: str):
+    try:
+        if not await acknowledge_proactive(message_id):
+            raise HTTPException(status_code=404, detail="Proactive message not found")
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Proactive message acknowledgement failed")
         raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 

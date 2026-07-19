@@ -238,17 +238,18 @@ class ReminderService:
         return [serialize_reminder(document) async for document in cursor]
 
     async def get_matchable_events(
-        self, now: dt.datetime
+        self, now: dt.datetime, *, room_number: Optional[int] = None
     ) -> list[dict[str, Any]]:
         local_now = to_local(now)
         today = local_now.date().isoformat()
-        cursor = self.collection.find(
-            {
-                "status": "active",
-                "trigger_type": "event",
-                "event_trigger.valid_date": {"$in": [None, today]},
-            }
-        )
+        query: dict[str, Any] = {
+            "status": "active",
+            "trigger_type": "event",
+            "event_trigger.valid_date": {"$in": [None, today]},
+        }
+        if room_number is not None:
+            query["event_trigger.room_number"] = {"$in": [None, room_number]}
+        cursor = self.collection.find(query)
         results: list[dict[str, Any]] = []
         async for document in cursor:
             trigger = document.get("event_trigger") or {}
@@ -278,8 +279,10 @@ async def list_active() -> list[dict[str, Any]]:
     return await _default_service.list_active()
 
 
-async def mark_done(reminder_id: str) -> bool:
-    return await _default_service.mark_done(reminder_id)
+async def mark_done(
+    reminder_id: str, *, now: Optional[dt.datetime] = None
+) -> bool:
+    return await _default_service.mark_done(reminder_id, now=now)
 
 
 async def get_due_reminders(now: dt.datetime) -> list[dict[str, Any]]:
@@ -287,6 +290,8 @@ async def get_due_reminders(now: dt.datetime) -> list[dict[str, Any]]:
 
 
 async def get_matchable_event_reminders(
-    now: dt.datetime,
+    now: dt.datetime, *, room_number: Optional[int] = None
 ) -> list[dict[str, Any]]:
-    return await _default_service.get_matchable_events(now)
+    return await _default_service.get_matchable_events(
+        now, room_number=room_number
+    )
