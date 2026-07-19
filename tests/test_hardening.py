@@ -5,6 +5,17 @@ from types import SimpleNamespace
 import pytest
 
 
+def test_pytest_basetemp_falls_back_when_candidate_is_not_writable(monkeypatch):
+    import conftest
+
+    config = SimpleNamespace(option=SimpleNamespace(basetemp=None))
+    monkeypatch.setattr(conftest, "_pytest_basetemp_is_writable", lambda path: False)
+
+    conftest.pytest_configure(config)
+
+    assert config.option.basetemp is None
+
+
 def test_alert_indexes_initialize_once_and_retry(monkeypatch):
     from Blue_dream_agents import alert_service
 

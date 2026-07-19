@@ -1,5 +1,6 @@
 import os
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -17,9 +18,26 @@ os.environ.setdefault("OLLAMA_BASE_URL", "http://127.0.0.1:1")
 os.environ.setdefault("CHROMA_PERSIST_DIR", str(ROOT / "Storage" / "test-chroma"))
 
 
+def _pytest_basetemp_is_writable(path: Path) -> bool:
+    probe = path / f".pytest-write-probe-{uuid.uuid4().hex}"
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe.touch(exist_ok=False)
+        probe.unlink()
+        return True
+    except OSError:
+        try:
+            probe.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+
 def pytest_configure(config):
     if config.option.basetemp is None:
-        config.option.basetemp = str(ROOT / "Storage" / "pytest-tmp")
+        candidate = ROOT / "Storage" / "pytest-tmp"
+        if _pytest_basetemp_is_writable(candidate):
+            config.option.basetemp = str(candidate)
 
 
 @pytest.fixture

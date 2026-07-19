@@ -38,11 +38,19 @@ class ConsolidationFailure(BaseModel):
     reason: str
 
 
+class ConsolidationSkip(BaseModel):
+    date: str
+    room_number: int
+    remaining_event_count: int
+    reason: str
+
+
 class ConsolidationReport(BaseModel):
     groups_formed: int = 0
     events_consolidated: int = 0
     summaries_created: int = 0
     failures: list[ConsolidationFailure] = Field(default_factory=list)
+    skipped: list[ConsolidationSkip] = Field(default_factory=list)
 
 
 def _local_day_start(value: dt.datetime) -> dt.datetime:
@@ -159,6 +167,31 @@ async def _get_or_create_summary(
         return existing, False
 
 
+async def _existing_group_summaries(
+    *, day: dt.date, room_number: int
+) -> list[dict[str, Any]]:
+    collection = get_memory_summaries_collection()
+    return [
+        document
+        async for document in collection.find(
+            {"date": day.isoformat(), "room_number": room_number}
+        )
+    ]
+
+
+def _next_summary_id(
+    *, day: dt.date, room_number: int, existing: list[dict[str, Any]]
+) -> str:
+    base_id = f"sum_{day.isoformat()}_{room_number}"
+    used_ids = {str(document.get("summary_id")) for document in existing}
+    if base_id not in used_ids:
+        return base_id
+    suffix = 1
+    while f"{base_id}_{suffix}" in used_ids:
+        suffix += 1
+    return f"{base_id}_{suffix}"
+
+
 async def run_consolidation(now: dt.datetime | None = None) -> ConsolidationReport:
     """Consolidate eligible day/room groups without deleting MongoDB memories."""
 
@@ -175,13 +208,43 @@ async def run_consolidation(now: dt.datetime | None = None) -> ConsolidationRepo
     for (day, room_number), events in qualifying:
         summary_id = f"sum_{day.isoformat()}_{room_number}"
         try:
+            existing_summaries = await _existing_group_summaries(
+                day=day, room_number=room_number
+            )
+            covered_event_ids = {
+                str(event_id)
+                for summary in existing_summaries
+                for event_id in summary.get("source_event_ids", [])
+            }
+            new_events = [
+                event for event in events if event.event_id not in covered_event_ids
+            ]
+            if existing_summaries and len(new_events) < settings.consolidation_min_events:
+                report.skipped.append(
+                    ConsolidationSkip(
+                        date=day.isoformat(),
+                        room_number=room_number,
+                        remaining_event_count=len(new_events),
+                        reason=(
+                            "fewer than CONSOLIDATION_MIN_EVENTS remain after "
+                            "excluding already summarized events"
+                        ),
+                    )
+                )
+                continue
+
+            summary_id = _next_summary_id(
+                day=day,
+                room_number=room_number,
+                existing=existing_summaries,
+            )
             summary, created = await _get_or_create_summary(
                 summary_id=summary_id,
                 day=day,
                 room_number=room_number,
-                events=events,
+                events=new_events,
             )
-            event_ids = [event.event_id for event in events]
+            event_ids = [event.event_id for event in new_events]
             await index_memory_summary(summary)
             await delete_memory_embeddings(event_ids)
             await get_events_collection().update_many(

@@ -180,7 +180,7 @@ def test_eligible_filter_applies_threshold_status_pin_and_minimum(monkeypatch):
     assert [item.event_id for item in eligible] == ["low"]
 
 
-def test_consolidation_success_minimum_skip_and_existing_summary_recovery(monkeypatch):
+def test_consolidation_success_and_minimum_skip(monkeypatch):
     day = dt.date(2026, 7, 10)
     qualifying = [event(f"a{i}", day, room=0) for i in range(3)]
     too_small = [event(f"b{i}", day, room=1) for i in range(2)]
@@ -203,7 +203,7 @@ def test_consolidation_success_minimum_skip_and_existing_summary_recovery(monkey
         return [*qualifying, *too_small]
 
     async def existing(**kwargs):
-        return summary, False
+        return summary, True
 
     async def index(value):
         calls.append(("index", value["summary_id"]))
@@ -213,6 +213,11 @@ def test_consolidation_success_minimum_skip_and_existing_summary_recovery(monkey
 
     monkeypatch.setattr(memory_lifecycle, "_eligible_events", eligible)
     monkeypatch.setattr(memory_lifecycle, "_get_or_create_summary", existing)
+    monkeypatch.setattr(
+        memory_lifecycle,
+        "get_memory_summaries_collection",
+        lambda: FakeCollection(),
+    )
     monkeypatch.setattr(memory_lifecycle, "index_memory_summary", index)
     monkeypatch.setattr(memory_lifecycle, "delete_memory_embeddings", delete)
     monkeypatch.setattr(memory_lifecycle, "get_events_collection", lambda: events_collection)
@@ -220,7 +225,7 @@ def test_consolidation_success_minimum_skip_and_existing_summary_recovery(monkey
     report = run(memory_lifecycle.run_consolidation())
     assert report.groups_formed == 1
     assert report.events_consolidated == 3
-    assert report.summaries_created == 0
+    assert report.summaries_created == 1
     assert calls[0] == ("index", "sum_2026-07-10_0")
     assert all(doc["lifecycle_status"] == "consolidated" for doc in events_collection.documents[:3])
     assert all(doc["lifecycle_status"] == "active" for doc in events_collection.documents[3:])
@@ -250,6 +255,11 @@ def test_consolidation_isolates_one_group_failure(monkeypatch):
 
     monkeypatch.setattr(memory_lifecycle, "_eligible_events", eligible)
     monkeypatch.setattr(memory_lifecycle, "_get_or_create_summary", create)
+    monkeypatch.setattr(
+        memory_lifecycle,
+        "get_memory_summaries_collection",
+        lambda: FakeCollection(),
+    )
     monkeypatch.setattr(memory_lifecycle, "index_memory_summary", noop)
     monkeypatch.setattr(memory_lifecycle, "delete_memory_embeddings", noop)
     monkeypatch.setattr(memory_lifecycle, "get_events_collection", lambda: collection)
@@ -259,6 +269,167 @@ def test_consolidation_isolates_one_group_failure(monkeypatch):
     assert report.summaries_created == 1
     assert report.failures[0].summary_id == "sum_2026-07-10_0"
     assert report.failures[0].reason == "group consolidation failed"
+
+
+def test_reactivated_source_with_too_few_late_events_is_skipped(monkeypatch):
+    day = dt.date(2026, 7, 10)
+    old_source = event("old-a", day, status="consolidated")
+    old_source.consolidated_into = "sum_2026-07-10_0"
+    late_events = [event(f"late-{index}", day) for index in range(2)]
+    events_collection = FakeCollection(
+        [memory_event_to_mongo(item) for item in [old_source, *late_events]]
+    )
+    summaries_collection = FakeCollection(
+        [
+            {
+                "summary_id": "sum_2026-07-10_0",
+                "date": day.isoformat(),
+                "room_number": 0,
+                "source_event_ids": ["old-a", "old-b", "old-c"],
+            }
+        ]
+    )
+
+    async def noop(*args, **kwargs):
+        return None
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("skipped groups must not mutate the index")
+
+    settings = SimpleNamespace(
+        consolidation_age_days=2,
+        consolidation_importance_max=0.5,
+        consolidation_min_events=3,
+    )
+    monkeypatch.setattr(memory_lifecycle, "get_provider_settings", lambda: settings)
+    monkeypatch.setattr(
+        memory_lifecycle, "get_events_collection", lambda: events_collection
+    )
+    monkeypatch.setattr(
+        memory_lifecycle,
+        "get_memory_summaries_collection",
+        lambda: summaries_collection,
+    )
+    monkeypatch.setattr(memory_lifecycle, "index_memory_event", noop)
+    monkeypatch.setattr(memory_lifecycle, "index_memory_summary", forbidden)
+    monkeypatch.setattr(memory_lifecycle, "delete_memory_embeddings", forbidden)
+
+    assert run(memory_lifecycle.pin_event("old-a")) is True
+    assert run(memory_lifecycle.unpin_event("old-a")) is True
+    report = run(
+        memory_lifecycle.run_consolidation(
+            dt.datetime(2026, 7, 18, 12, tzinfo=LOCAL_TZ)
+        )
+    )
+
+    assert report.groups_formed == 1
+    assert report.events_consolidated == 0
+    assert report.summaries_created == 0
+    assert report.failures == []
+    assert len(report.skipped) == 1
+    assert report.skipped[0].remaining_event_count == 2
+    assert all(
+        document["lifecycle_status"] == "active"
+        for document in events_collection.documents
+    )
+
+
+def test_late_events_use_suffixed_summary_and_rerun_is_no_op(monkeypatch):
+    day = dt.date(2026, 7, 10)
+    old_source = event("old-a", day, status="consolidated")
+    old_source.consolidated_into = "sum_2026-07-10_0"
+    late_events = [event(f"late-{index}", day) for index in range(3)]
+    events_collection = FakeCollection(
+        [memory_event_to_mongo(item) for item in [old_source, *late_events]]
+    )
+    summaries_collection = FakeCollection(
+        [
+            {
+                "summary_id": "sum_2026-07-10_0",
+                "date": day.isoformat(),
+                "room_number": 0,
+                "source_event_ids": ["old-a", "old-b", "old-c"],
+            }
+        ]
+    )
+    index_calls = []
+    delete_calls = []
+
+    async def generate(*, summary_id, day, room_number, room_name, events):
+        return {
+            "summary_id": summary_id,
+            "period": "day",
+            "date": day.isoformat(),
+            "room_number": room_number,
+            "room_name": room_name,
+            "text": "Late memories.",
+            "source_event_ids": [item.event_id for item in events],
+            "created_at": dt.datetime(2026, 7, 18, tzinfo=LOCAL_TZ),
+        }
+
+    async def index_event(value):
+        index_calls.append(("event", value.event_id))
+
+    async def index_summary(value):
+        index_calls.append(("summary", value["summary_id"]))
+
+    async def delete(ids):
+        delete_calls.append(list(ids))
+
+    settings = SimpleNamespace(
+        consolidation_age_days=2,
+        consolidation_importance_max=0.5,
+        consolidation_min_events=3,
+    )
+    monkeypatch.setattr(memory_lifecycle, "get_provider_settings", lambda: settings)
+    monkeypatch.setattr(
+        memory_lifecycle, "get_events_collection", lambda: events_collection
+    )
+    monkeypatch.setattr(
+        memory_lifecycle,
+        "get_memory_summaries_collection",
+        lambda: summaries_collection,
+    )
+    monkeypatch.setattr(memory_lifecycle, "_generate_summary", generate)
+    monkeypatch.setattr(memory_lifecycle, "index_memory_event", index_event)
+    monkeypatch.setattr(memory_lifecycle, "index_memory_summary", index_summary)
+    monkeypatch.setattr(memory_lifecycle, "delete_memory_embeddings", delete)
+
+    assert run(memory_lifecycle.pin_event("old-a")) is True
+    assert run(memory_lifecycle.unpin_event("old-a")) is True
+    first = run(
+        memory_lifecycle.run_consolidation(
+            dt.datetime(2026, 7, 18, 12, tzinfo=LOCAL_TZ)
+        )
+    )
+
+    suffixed = next(
+        item
+        for item in summaries_collection.documents
+        if item["summary_id"] == "sum_2026-07-10_0_1"
+    )
+    assert suffixed["source_event_ids"] == ["late-0", "late-1", "late-2"]
+    assert first.events_consolidated == 3
+    assert first.summaries_created == 1
+    assert first.skipped == []
+    assert delete_calls == [["late-0", "late-1", "late-2"]]
+    assert events_collection.documents[0]["lifecycle_status"] == "active"
+    assert all(
+        document["consolidated_into"] == "sum_2026-07-10_0_1"
+        for document in events_collection.documents[1:]
+    )
+
+    calls_after_first = (list(index_calls), list(delete_calls))
+    second = run(
+        memory_lifecycle.run_consolidation(
+            dt.datetime(2026, 7, 18, 12, tzinfo=LOCAL_TZ)
+        )
+    )
+    assert second.groups_formed == 0
+    assert second.events_consolidated == 0
+    assert second.summaries_created == 0
+    assert second.skipped == []
+    assert (index_calls, delete_calls) == calls_after_first
 
 
 def test_pin_reactivates_and_reembeds_while_unpin_stays_active(monkeypatch):

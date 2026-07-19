@@ -85,6 +85,7 @@ try {
 
     $env:MONGODB_URI = "mongodb://127.0.0.1:27027"
     $env:CHROMA_PERSIST_DIR = $chromaData
+    $env:SPEC0007_REHEARSAL_ALLOW_DESTRUCTIVE = "1"
     $env:LLM_PROVIDER = "qwen"
     $env:EMBEDDING_PROVIDER = "qwen"
     $env:CONSOLIDATION_AGE_DAYS = "2"

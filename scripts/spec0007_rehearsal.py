@@ -6,8 +6,10 @@ import argparse
 import asyncio
 import datetime as dt
 import json
+import os
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -30,6 +32,49 @@ LOW_IDS = ["spec0007-low-1", "spec0007-low-2", "spec0007-low-3"]
 SURVIVOR_ID = "spec0007-pinned-survivor"
 STALE_ID = "spec0007-stale-mug"
 FRESH_ID = "spec0007-fresh-mug"
+
+
+def _normalized_path(value: str) -> str:
+    return os.path.normcase(os.path.abspath(os.path.expanduser(value)))
+
+
+def assert_safe_rehearsal_environment() -> None:
+    """Refuse to touch stores unless the isolated rehearsal is explicitly configured."""
+
+    errors: list[str] = []
+    if os.environ.get("SPEC0007_REHEARSAL_ALLOW_DESTRUCTIVE") != "1":
+        errors.append("SPEC0007_REHEARSAL_ALLOW_DESTRUCTIVE must equal 1")
+
+    mongodb_uri = os.environ.get("MONGODB_URI", "").strip()
+    if not mongodb_uri:
+        errors.append("MONGODB_URI must be explicitly set")
+    else:
+        try:
+            parsed_uri = urlparse(mongodb_uri)
+            mongo_port = parsed_uri.port
+        except ValueError:
+            parsed_uri = None
+            mongo_port = None
+        if (
+            parsed_uri is None
+            or parsed_uri.scheme != "mongodb"
+            or not parsed_uri.hostname
+            or mongo_port is None
+        ):
+            errors.append("MONGODB_URI must use an explicit MongoDB host and port")
+        elif mongo_port == 27017:
+            errors.append("MONGODB_URI must not use port 27017")
+
+    chroma_path = os.environ.get("CHROMA_PERSIST_DIR", "").strip()
+    if not chroma_path:
+        errors.append("CHROMA_PERSIST_DIR must be explicitly set")
+    elif _normalized_path(chroma_path) == _normalized_path(str(ROOT / "Storage" / "chroma")):
+        errors.append("CHROMA_PERSIST_DIR must not use Storage/chroma")
+
+    if errors:
+        raise RuntimeError(
+            "Refusing to run the destructive spec 0007 rehearsal: " + "; ".join(errors)
+        )
 
 
 def summary_day() -> dt.date:
@@ -218,6 +263,7 @@ async def verify() -> dict:
 
 
 async def main(mode: str) -> None:
+    assert_safe_rehearsal_environment()
     try:
         result = await (seed() if mode == "seed" else verify())
         print(json.dumps(result, indent=2, default=str))
