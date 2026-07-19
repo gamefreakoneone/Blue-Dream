@@ -5,6 +5,7 @@ import { useProactivePoll } from "../hooks/useProactivePoll";
 import { ChatMessage } from "../components/ChatMessage";
 import { ProactiveBubble } from "../components/ProactiveBubble";
 import { NotificationCard } from "../components/NotificationCard";
+import { playSoftChime, showInPageNotifications } from "../proactiveFeedback";
 
 export function ChatScreen({ sessionId, messages, onMessages, pushState, onPushState }) {
   const [text, setText] = useState("");
@@ -12,7 +13,11 @@ export function ChatScreen({ sessionId, messages, onMessages, pushState, onPushS
   const endRef = useRef(null);
   const acked = useRef(new Set());
   const addProactive = useCallback((values) => onMessages(values.map((value) => ({ ...value, kind: "proactive" }))), [onMessages]);
-  const { highlightedId } = useProactivePoll({ sessionId, onMessages: addProactive });
+  const handleArrival = useCallback((values, source) => {
+    playSoftChime();
+    if (source === "poll") showInPageNotifications(values, pushState);
+  }, [pushState]);
+  const { highlightedId } = useProactivePoll({ sessionId, onMessages: addProactive, onArrival: handleArrival });
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });

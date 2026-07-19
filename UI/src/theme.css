@@ -143,6 +143,10 @@ img { max-width: 100%; }
 .create-card-title p { margin: 0; color: var(--muted); font-size: 15px; }
 .create-card label:not(.check-label) { display: grid; gap: 7px; font-size: 15px; font-weight: 720; }
 .create-card input:not([type="checkbox"]) { width: 100%; min-height: 52px; padding: 0 14px; border: 1px solid #cbded5; border-radius: 14px; background: #fbfdfc; color: var(--text); font-size: 17px; }
+.event-create-card { border-color: #eed9a7; background: linear-gradient(145deg, #fffcf4, #fff); }
+.form-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-pair label { min-width: 0; }
+.event-button { background: linear-gradient(135deg, #b87512, #95600a); box-shadow: 0 8px 18px rgba(154, 90, 5, .18); }
 .check-label { min-height: 48px; display: flex; align-items: center; gap: 11px; font-weight: 650; cursor: pointer; }
 .check-label input { width: 23px; height: 23px; accent-color: var(--emerald); }
 .reminder-group { margin-top: 27px; }
@@ -186,6 +190,17 @@ img { max-width: 100%; }
 .pin-button.selected { color: #9c6806; border-color: #eed58d; background: #fff8dd; }
 .pin-button:disabled { cursor: default; opacity: 1; }
 .hide-button { border: 0; background: transparent; color: var(--muted); }
+.summaries-title { margin-top: 36px; }
+.compact-loading { min-height: 90px; }
+.summary-list { display: grid; gap: 13px; }
+.summary-card { padding: 19px; border: 1px solid #c9e3d4; border-radius: 22px; background: linear-gradient(145deg, #f1faf5, #fff); box-shadow: 0 5px 17px rgba(20, 53, 42, .045); }
+.summary-date { display: flex; align-items: center; gap: 12px; }
+.summary-date div { display: grid; gap: 2px; }
+.summary-date time { font-size: 18px; font-weight: 760; }
+.summary-date span { color: var(--emerald); font-size: 14px; font-weight: 680; }
+.summary-card > p { margin: 15px 1px 11px; font-size: 18px; line-height: 1.55; }
+.summary-card > small { color: var(--muted); font-size: 13px; }
+.summary-empty { min-height: 190px; }
 
 /* Demo sheet */
 .sheet-layer { position: fixed; z-index: 100; inset: 0; display: flex; align-items: flex-end; justify-content: center; padding-top: 25px; background: rgba(10, 30, 24, .38); backdrop-filter: blur(5px); animation: fade-in .2s ease both; }
@@ -242,6 +257,7 @@ img { max-width: 100%; }
   .proactive-text { font-size: 18px; }
   .reminder-card { grid-template-columns: auto 1fr; }
   .reminder-card .done-button { grid-column: 2; width: fit-content; }
+  .form-pair { grid-template-columns: 1fr; }
   .recall-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .bottom-nav a { font-size: 12px; }
 }
