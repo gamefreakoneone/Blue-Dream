@@ -30,4 +30,4 @@ Completed.
 
 ### Commit evidence
 
-- Implementation commit: recorded by the follow-up evidence commit.
+- Implementation commit: `4456ff9` (`feat: implement spec 0008 proactive channel`).
