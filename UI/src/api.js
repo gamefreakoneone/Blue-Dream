@@ -60,10 +60,14 @@ export const api = {
 export function mediaUrl(value) {
   if (!value) return null;
   const normalized = String(value).replaceAll("\\", "/");
-  if (normalized.startsWith("/")) return encodeURI(normalized);
+  const encodePath = (path) => {
+    try { return encodeURI(decodeURI(path)); }
+    catch { return encodeURI(path); }
+  };
+  if (normalized.startsWith("/")) return encodePath(normalized);
   const storage = normalized.toLowerCase().indexOf("storage/");
-  if (storage >= 0) return encodeURI(`/${normalized.slice(storage).toLowerCase().startsWith("storage/") ? "storage/" + normalized.slice(storage + 8) : normalized.slice(storage)}`);
+  if (storage >= 0) return encodePath(`/storage/${normalized.slice(storage + 8)}`);
   const capture = normalized.toLowerCase().indexOf("capture/");
-  if (capture >= 0) return encodeURI(`/capture/${normalized.slice(capture + 8)}`);
-  return encodeURI(normalized);
+  if (capture >= 0) return encodePath(`/capture/${normalized.slice(capture + 8)}`);
+  return encodePath(normalized);
 }

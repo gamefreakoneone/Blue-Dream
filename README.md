@@ -21,7 +21,6 @@ Memoria is designed around one practical idea: use local, grounded AI to help pa
 - **Proactive patient guidance**: Safety warnings, morning reports, and time- or event-triggered reminders appear as agent-initiated web chat turns.
 - **Safety reasoning prototype**: Factual observations from room events can be judged for patient-actionable risks, such as unattended cooking or ambiguous hazards.
 - **Patient web UI**: FastAPI serves the installable React PWA at `http://localhost:8000` after its production bundle has been built.
-- **Expo mobile app**: The React Native app supports chat, New Chat, alert list/detail screens, acknowledgement actions, geofence guidance, deep links, and notification scaffolding.
 - **Fall detection**: A custom YOLO model watches live camera feeds and can notify a caregiver or emergency contact through the alert path.
 
 ## Provider Architecture
@@ -47,7 +46,7 @@ Full-video Qwen analysis uses a private Alibaba OSS presigned URL because inline
 5. The configured model routes the query, judges evidence quality, and synthesizes a grounded response.
 6. If the object is present in a current-room image, Memoria sends that image to the configured spatial provider for highlighting.
 7. If a safety event is detected, the configured model judges whether the patient or caregiver should be alerted; actionable patient warnings enter the proactive channel.
-8. The web app polls for proactive safety, morning-report, and reminder turns while the mobile app continues to show alert detail, acknowledgement, and geofence guidance.
+8. The installable web app polls for proactive safety, morning-report, and reminder turns; Web Push wakes it when closed, while the atomic poll remains the sole renderer and pending-to-delivered claim.
 
 ## Architecture
 
@@ -76,8 +75,8 @@ At a high level:
 - **Video perception**: `qwen3-vl-flash` via private OSS URL; full-video Gemini fallback
 - **Spatial highlighting**: `qwen3-vl-plus`; Gemini fallback
 - **Audio transcription**: `qwen3-asr-flash` compatible-mode `input_audio`
-- **Patient web app**: Static HTML/CSS/JS served by FastAPI
-- **Patient mobile app**: Expo React Native with Expo Router
+- **Patient web app**: Vite + React installable PWA, built to `UI/dist` and served by FastAPI
+- **Patient notifications**: standards-based Web Push with self-generated VAPID keys and an in-app polling fallback
 - **Computer vision**: OpenCV + Ultralytics YOLO
 
 ## Prerequisites
@@ -90,7 +89,7 @@ At a high level:
 - Node.js and npm for the patient web app
 - Required keys depend on the selected providers. The default Qwen profile uses `DASHSCOPE_API_KEY` (or `QWEN_APIKEY` fallback); Gemini features use `GEMINI_API_KEY`.
 - Optional keys/config:
-  - Firebase service account settings for remote push delivery
+  - Firebase service account settings only for the dormant legacy FCM compatibility path
   - Gmail OAuth credentials for caregiver email alerts
   - `OPENAI_API_KEY` for the offline-tested OpenAI profile or transcription fallback
 
@@ -197,6 +196,12 @@ PROFILE_MAX_ACTIVE_FACTS=50
 # Agent-initiated web-chat delivery and event-reminder matching
 PROACTIVE_EXPIRY_MINUTES=60
 EVENT_REMINDER_LLM_MATCH=true
+REMINDER_SWEEP_SECONDS=30
+
+# Standards-based Web Push (generate locally; keep private key in untracked .env)
+VAPID_PRIVATE_KEY=
+VAPID_PUBLIC_KEY=
+VAPID_SUBJECT=mailto:memoria@localhost
 
 # Database
 MONGODB_URI=mongodb://localhost:27017
@@ -239,14 +244,6 @@ PATIENT_HOME_LNG=<longitude>
 PATIENT_GEOFENCE_RADIUS_METERS=<radius>
 ```
 
-Mobile development uses `Mobile/.env`:
-
-```ini
-EXPO_PUBLIC_API_BASE_URL=http://<your-lan-ip>:8000
-```
-
-Metro reads this at startup, so restart `npx expo start` after changing it.
-
 See `.env.example` for the complete configuration surface, including OSS video-bridge, safety, Firebase, and geofence settings.
 
 ### Memory lifecycle
@@ -263,14 +260,18 @@ recall budget and expose the packed evidence in the web UI's “Memory used” p
 
 ### Proactive channel
 
-The patient web app polls every five seconds for globally pending agent-initiated
+The patient PWA polls every five seconds for globally pending agent-initiated
 messages. Actionable safety alerts, the first camera event's morning report, due
 time reminders, and matching event reminders become distinct "Memoria noticed"
-chat turns. Messages expire after `PROACTIVE_EXPIRY_MINUTES`; expired warnings are
-never delivered, and the first browser session to claim a message owns its global
-delivery. When `EVENT_REMINDER_LLM_MATCH=true`, the configured judge verifies the
-event condition after the deterministic room/date/window prefilter. A disabled or
-failed judge falls back to that deterministic match.
+chat turns. A successful insert also attempts Web Push to enabled patient browser
+subscriptions. Push is only a wake-up signal: the atomic pending poll remains the
+sole in-app renderer and pending-to-delivered transition. Messages expire after
+`PROACTIVE_EXPIRY_MINUTES`; expired warnings are never delivered, and the first
+browser session to claim a message owns its global delivery. The dedicated reminder
+sweep runs every `REMINDER_SWEEP_SECONDS` (default 30; `0` disables it) without
+changing the poll-driven due check. When `EVENT_REMINDER_LLM_MATCH=true`, the
+configured judge verifies the event condition after the deterministic room/date/window
+prefilter. A disabled or failed judge falls back to that deterministic match.
 
 Event reminders appear after a recording ends and full video processing completes,
 typically about a minute after the patient leaves the frame. This latency is expected
@@ -306,13 +307,30 @@ The backend resolves those paths beneath `MEDIA_ROOT` and exposes URL paths thro
 the static mounts above. Leave `MEDIA_ROOT` blank unless runtime media lives under
 a different absolute root.
 
-### 2. Start the backend for LAN/mobile access
+### 2. Open the PWA on an Android phone
 
 ```powershell
 uvicorn Blue_dream_agents.api:app --reload --host 0.0.0.0
 ```
 
-Use this when the Expo mobile app needs to reach the backend from a phone or emulator on the same network.
+For the rehearsed USB path, enable Android Developer options and USB debugging, connect the phone, then run:
+
+```powershell
+adb devices
+adb reverse tcp:8000 tcp:8000
+```
+
+In phone Chrome, open `http://localhost:8000`, choose **Add to Home screen / Install app**, launch the standalone Memoria icon, and tap **Enable** in the notification card. Android notification permission is intentionally requested only from that tap.
+
+For Android 11+ wireless debugging, pair once and recreate the reverse tunnel over Wi-Fi:
+
+```powershell
+adb pair <phone-ip>:<pair-port>
+adb connect <phone-ip>:<port>
+adb reverse tcp:8000 tcp:8000
+```
+
+After the reverse succeeds, unplug USB and keep the backend running. Push delivery itself uses the browser push service and phone internet; the adb tunnel is needed when the opened PWA loads API data. Keep USB as the rehearsed fallback.
 
 ### 3. Start the capture pipeline
 
@@ -326,13 +344,20 @@ Camera device indices and room mappings come from `CAMERA_INDICES` and
 Room. The model path is resolved from the `Capture/` module, so this command can
 also be launched by absolute path from another working directory.
 
-### 4. Start the mobile app
+### 4. Run the UI in Vite development mode
 
-```powershell
-cd Mobile && npx expo start
+```bash
+cd UI
+npm run dev
 ```
 
-Expo Go can test chat, local notification behavior, alert screens, deep links, and geofence navigation. Real backend-triggered remote push on Android requires an EAS development build with Firebase/FCM configuration.
+Vite proxies the documented API prefixes to `http://localhost:8000`. Production and phone demos still use the built bundle served by FastAPI. If a browser has stale service-worker state, use **Caregiver / demo tools → Refresh app**, or run this in DevTools and reload:
+
+```javascript
+navigator.serviceWorker.getRegistrations()
+  .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+  .then(() => location.reload());
+```
 
 ## API Contracts
 
@@ -410,7 +435,19 @@ Polling atomically claims unexpired messages across all browser sessions. Supply
 questions retain the proactive context. The web UI acknowledges a message after it
 renders.
 
-### Mobile Alerts
+### Web Push and Daily Summaries
+
+```text
+GET  /push/vapid-public-key
+POST /push/subscribe
+POST /push/unsubscribe
+POST /push/test
+GET  /memory/summaries?days=7
+```
+
+Subscriptions are upserted by browser endpoint, scoped to the patient role, and disabled after push-service 404/410 responses. Daily summaries are read-only, newest date first, room-stable, and JSON-safe. Generate VAPID keys locally with `python scripts/generate_vapid_keys.py`; store the private/public values only in the untracked root `.env`.
+
+### Patient Alerts
 
 ```text
 POST /devices/register
@@ -426,6 +463,8 @@ Acknowledgement request body:
 ```
 
 Alert detail responses are JSON-safe and include fields such as `alert_id`, `event_id`, `hazard_type`, `severity`, `title`, `body`, `detailed_explanation`, `recommended_action`, `room_name`, `image_path`, `status`, and `deep_link`.
+
+`POST /devices/register` and the legacy FCM delivery code remain dormant compatibility contracts. The current patient notification path is the PWA's `/push/*` Web Push flow.
 
 ### Geofence
 
@@ -447,14 +486,13 @@ Geofence event body:
 { "event_type": "exit | enter", "latitude": 0.0, "longitude": 0.0, "device_id": "phone-id" }
 ```
 
-The first geofence implementation is intentionally prototype-simple: the backend stores one default boundary, the mobile app checks location locally, and the app launches Google Maps navigation when the patient taps "Guide me home."
+The first geofence implementation remains intentionally prototype-simple. The backend contracts are preserved, but the patient PWA shows no geofence UI; the canned exit rehearsal and its derived result live only in the caregiver/demo-tools sheet.
 
 ## Repository Layout
 
 - **`Blue_dream_agents/`**: FastAPI backend, unified provider client, assistant orchestration, memory retrieval, safety agent, and alert service
 - **`Capture/`**: Camera ingestion, audio capture, video queueing, and fall detection
-- **`UI/`**: Static patient web UI served by FastAPI
-- **`Mobile/`**: Expo React Native patient app
+- **`UI/`**: Vite + React patient PWA source; `npm run build` generates the gitignored `UI/dist` served by FastAPI
 - **`Storage/`**: Runtime media, highlighted images, and local Chroma persistence
 - **`Demo/`**: Demo images, GIFs, architecture visuals, and evaluation assets
 - **`benchmarks/`**: Reference benchmarking utilities and architecture notes
@@ -466,8 +504,7 @@ The first geofence implementation is intentionally prototype-simple: the backend
 - Qwen is the default provider profile. Silent capture video and separately recorded microphone audio are analyzed independently and combined during ingestion.
 - OSS is only a private transfer bridge for model access. Local `Storage/` files remain authoritative, presigned URLs are short-lived, and signed queries are never logged.
 - The video degradation ladder is OSS-URL Qwen → full-video Gemini → a partial event with the existing reassuring unavailable note. Frame sampling is not used.
-- Remote Firebase push delivery is scaffolded but still requires final Firebase/device validation for production-style Android push.
-- Expo Go on Android SDK 54 does not support remote push notifications; use an EAS development build for real FCM testing.
+- Standards-based Web Push is the active patient notification path. Legacy FCM code and `/devices/register` stay dormant and are not part of the demo.
 - Capture defaults to camera indices `1,2`, mapped to room `0 = Bedroom` and
   `1 = Living Room`; override the device-to-room mapping in `.env` for other hardware.
 - Gmail alerts require local credential artifacts under `Blue_dream_agents/Tools/` and `FALL_ALERT_RECIPIENT_EMAIL` in `.env`.
@@ -481,7 +518,8 @@ Current overhaul status is tracked in [`docs/FEATURE_STATUS.md`](docs/FEATURE_ST
 
 - **Validated offline**: unified provider resolution/client contracts, structured JSON hardening, provider-specific semantic indexes, media paths, and existing backend contracts.
 - **Validated**: specs 0006-0008 durable memory, memory lifecycle, and proactive turns.
-- **Next**: spec 0009 voice agent (not started by this change).
+- **Implemented, pending phone validation**: spec 0013 React PWA, Web Push wake-up chain, reminder sweep, patient screens, and removal of the Expo prototype.
+- **Next**: spec 0009 voice agent remains a stretch after the demo-morning phone checklist.
 - **Planned**: voice, submission polish, optional Alibaba deployment, and the OpenAI provider flip.
 
 ## Historical Kaggle Project Description
@@ -492,13 +530,13 @@ The following section describes the pre-rebuild Gemma submission and is retained
 
 People living with dementia often lose confidence in ordinary moments: "Where are my keys?", "Was I in the kitchen today?", "Did I leave something dangerous behind?" Caregivers face the opposite problem: they need enough context to help, but they cannot watch continuously or interpret every home event manually. Memoria turns room monitoring into grounded, patient-facing memory assistance and actionable safety alerts.
 
-The system records multi-room home events, stores them as canonical memory records in MongoDB, indexes semantic memory in ChromaDB, and exposes the experience through a web chat and Expo React Native patient app. A patient can ask natural questions about objects, activities, or recent context. Memoria first checks the latest room snapshots for current object presence, then falls back to historical event memory when needed. Answers are grounded in stored evidence rather than free-form chatbot guessing, and image paths can point back to captured or highlighted evidence.
+The pre-rebuild system recorded multi-room home events, stored them as canonical memory records in MongoDB, indexed semantic memory in ChromaDB, and exposed the experience through a web chat and an Expo React Native prototype. A patient could ask natural questions about objects, activities, or recent context. Memoria first checked the latest room snapshots for current object presence, then fell back to historical event memory when needed. Answers were grounded in stored evidence rather than free-form chatbot guessing, and image paths could point back to captured or highlighted evidence.
 
 Gemma 4 E2B is the core reasoning layer. Running locally through Ollama, Gemma handles query routing, memory answer synthesis, semantic evidence judging, current-image object-presence checks, and safety-warning decisions. Ollama also powers the local embedding path with `nomic-embed-text`, which lets Memoria build semantic memory search without relying on Amazon/Nova embeddings. This matters for dementia care because privacy, trust, and low-latency local reasoning are not nice-to-have qualities; they are part of whether the system can be responsibly used in a home. Gemma decides whether evidence is strong enough to answer, whether a safety concern deserves a patient-facing warning, and how to explain that warning clearly.
 
 Memoria uses other models only where they are the right tool for perception. Gemini supports full-video understanding and spatial image localization, while audio transcription remains a current ingestion-time prototype dependency. MongoDB remains the source of truth, and ChromaDB is a rebuildable semantic index. This separation keeps the architecture honest: Gemma is the local reasoning and decision layer, while perception tools extract observations from media.
 
-The mobile app extends the system beyond a desktop demo. It supports chat with short-term session memory, alert list/detail screens, acknowledgement actions, geofence guidance, deep links, and push-notification scaffolding. For the hackathon prototype, alert records and mobile flows are implemented, while full remote FCM delivery requires final Firebase/device validation.
+That historical Expo prototype extended the system beyond a desktop demo with chat, alert detail, acknowledgement, geofence, deep-link, and notification scaffolding. It was removed by spec 0013 when the installable React PWA and standards-based Web Push became the active patient experience; dormant FCM backend contracts are preserved only for compatibility.
 
 The goal of Memoria is not to replace caregivers. It is to give patients more independence in small moments and give caregivers more trustworthy context when intervention is needed. The demo shows an end-to-end path from home monitoring, to memory event creation, to Gemma-grounded recall or safety reasoning, to a patient-facing response.
 

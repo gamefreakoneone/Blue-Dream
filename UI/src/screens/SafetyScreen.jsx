@@ -47,7 +47,7 @@ export function SafetyScreen() {
             <div className="safety-detail-heading"><span className="card-icon amber"><Icon name="safety" size={27} /></span><div><p>{selected.severity || "important"} safety note</p><h2>{selected.title || "Please take a moment"}</h2></div></div>
             {mediaUrl(selected.image_path) && <img className="safety-image" src={mediaUrl(selected.image_path)} alt="The highlighted area Memoria noticed" />}
             <p className="safety-message">{selected.body || selected.message || "Please take a moment to check that everything is okay."}</p>
-            {selected.recommended_action && <p className="recommended-action">A gentle next step: {String(selected.recommended_action).replaceAll("_", " ")}.</p>}
+            {selected.recommended_action && <p className="recommended-action">A gentle next step: {String(selected.recommended_action).replaceAll("_", " ").replace(/[.?!]+$/, "")}.</p>}
             <button type="button" className="primary-button safety-ack" onClick={acknowledge}><Icon name="check" size={21} /> I’m okay</button>
           </article>}
         </div>

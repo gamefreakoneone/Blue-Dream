@@ -38,8 +38,7 @@ The project targets two hackathon submissions from one codebase via a hot-swappa
 
 - `Blue_dream_agents/` — FastAPI backend, agents (routing, time, object, safety), memory stores, alert service, provider layer (`llm/`).
 - `Capture/` — camera ingestion, fall detection, audio capture, video queue. Runs on the local machine with physical webcams.
-- `UI/` — static patient web app served by FastAPI (chat, voice, proactive turns, emergency panel).
-- `Mobile/` — prototype-stage Expo React Native app. Kept in the repo, not part of the current demo; do not spend effort here unless a spec says so.
+- `UI/` — Vite + React installable patient PWA (chat, proactive turns, reminders, safety, memories). FastAPI serves the generated `UI/dist`; run `cd UI && npm run build` before starting the demo.
 - `docs/specs/` — per-feature requirements, design, tasks, and status.
 - `docs/archive/` — pre-rebuild planning baselines (reference only).
 - `tests/` — pytest suite (contract smokes, path service, provider JSON handling); scaffolded by spec 0001.

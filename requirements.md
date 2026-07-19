@@ -33,7 +33,7 @@ Third-party APIs are allowed in both hackathons (no exclusivity clauses; licensi
 - Reminders: patient-created timed reminders delivered through the proactive channel.
 - Memory lifecycle: importance scoring at ingest; consolidation of old low-importance events into daily summaries; consolidated originals removed from the semantic index but kept in MongoDB; pinned memories exempt from all decay.
 - Context-budgeted recall: candidates re-ranked by relevance × recency × importance, pinned items guaranteed, packed into a token budget; the response exposes which memories were used (`recall_debug`).
-- Proactive channel: the agent initiates chat turns for safety warnings, geofence exits, morning reports, and due reminders via a polled endpoint — no push infrastructure required.
+- Proactive channel: the agent initiates chat turns for safety warnings, geofence exits, morning reports, and due reminders via the atomic polled endpoint, with Web Push as a wake-up channel. The poll remains the sole pending-to-delivered claim and in-app renderer.
 - Voice: server-side speech-to-text and text-to-speech endpoints with a mic button in the web UI; provider-backed with a browser Web Speech fallback.
 - Patient-facing text never contains raw exception messages.
 - The capture pipeline (cameras, YOLO fall detection, recording) keeps working on the local machine; it can optionally post finished events to a remote backend.
@@ -50,10 +50,11 @@ Work proceeds one spec at a time under `docs/specs/`:
 6. **0006 durable-memory** — persistent conversations, profile facts, reminders.
 7. **0007 memory-lifecycle** — importance, consolidation, pinning, budgeted recall.
 8. **0008 proactive-channel** — trigger engine + agent-initiated chat.
-9. **0009 voice-agent** — ASR/TTS endpoints + mic UI.
-10. **0010 alibaba-deployment** (stretch) — Docker, `/ingest`, ECS walkthrough.
-11. **0011 qwen-submission** — README, diagram, video, checklist.
-12. **0012 openai-week** — GPT-5.6 flip, caregiver dashboard, submission package.
+9. **0013 web-ui-rehaul** — React PWA, Web Push wake-up chain, patient screens, and removal of the Expo prototype.
+10. **0009 voice-agent** — ASR/TTS endpoints + mic UI (stretch after 0013).
+11. **0010 alibaba-deployment** (stretch) — Docker, `/ingest`, ECS walkthrough.
+12. **0011 qwen-submission** — README, diagram, video, checklist.
+13. **0012 openai-week** — GPT-5.6 flip, caregiver dashboard, submission package.
 
 ## Bar Raisers
 
@@ -63,7 +64,7 @@ Work proceeds one spec at a time under `docs/specs/`:
 ## Non-Goals (Current Scope)
 
 - No facial recognition (post-hackathon backlog).
-- No mobile push delivery; the Expo app stays in the repo untouched and demos are web-only.
+- No native mobile app or native mobile push delivery. The Expo prototype was deleted by spec 0013; the installable web PWA and standards-based Web Push are in scope.
 - No Telegram/SMS caregiver channels (email path remains; backlog).
 - No full `src/` package restructure (post-hackathon backlog).
 - No user accounts, auth hardening, or production deployment beyond the demo topology.

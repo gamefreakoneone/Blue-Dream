@@ -9,7 +9,7 @@
 - [ ] Verify live GPT-5.6 model id + structured-outputs parameter shape against current OpenAI docs; record in `status.md`.
 - [ ] Implement the `json_schema` strict branch in `invoke_structured` (+ additionalProperties post-processing, error fallback).
 - [ ] Confirm/wire openai presets: text/vision GPT-5.6, `text-embedding-3-small`, `gpt-4o-transcribe`, `gpt-4o-mini-tts`.
-- [ ] Add `GET /memory/summaries` and `GET /alerts/recent` (JSON-safe, read-only).
+- [ ] Add `GET /alerts/recent` (JSON-safe, read-only). `GET /memory/summaries` was delivered early by spec 0013 and is inherited unchanged.
 - [ ] Build `UI/dashboard.html` + `dashboard.js` (+ small css): profile facts w/ pin+archive, daily summaries + consolidation button w/ inline report, alerts (all roles) w/ images, reminders list/create; privacy line; auto-refresh.
 - [ ] Voice round-trip smoke on the OpenAI profile.
 - [ ] README "Built during OpenAI Build Week" section (Codex collaboration, key decisions, evidence pointers).

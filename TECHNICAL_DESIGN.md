@@ -8,9 +8,9 @@ Memoria has five layers:
 
 1. **Capture** (`Capture/`) records room events on the local machine: YOLO person/fall detection, per-camera video + audio recording, final-frame screenshots, a processing queue.
 2. **Ingestion** (`Blue_dream_agents/consolidator.py`) turns a finished recording into a canonical `MemoryEvent`: video description + factual safety observations (vision model), audio transcript (ASR), importance score, safety judgment, MongoDB insert, semantic indexing.
-3. **Memory stores**: MongoDB (`dementia_assistance`) is the single source of truth — `events`, `memory_summaries`, `conversation_sessions`, `profile_facts`, `reminders`, `safety_alerts`, `proactive_messages`. ChromaDB is a rebuildable semantic index only.
+3. **Memory stores**: MongoDB (`dementia_assistance`) is the single source of truth — `events`, `memory_summaries`, `conversation_sessions`, `profile_facts`, `reminders`, `safety_alerts`, `proactive_messages`, `push_subscriptions`. ChromaDB is a rebuildable semantic index only.
 4. **Provider layer** (`Blue_dream_agents/llm/`) is one async client speaking the OpenAI chat-completions protocol to DashScope (Qwen), OpenAI, or local Ollama, selected by `LLM_PROVIDER`.
-5. **Interaction** (`Blue_dream_agents/api.py` + `UI/`) serves the patient chat (text + voice + proactive turns), alerts, geofence, and static media; `Mobile/` is a prototype-stage Expo app kept for future work.
+5. **Interaction** (`Blue_dream_agents/api.py` + `UI/`) is a Vite + React installable patient PWA built to `UI/dist`. It serves chat, proactive turns, reminders, safety, memories, alerts, and static media; Web Push wakes the service worker when the app is closed. The former Expo `Mobile/` prototype was removed by spec 0013.
 
 ## Development Environment
 
@@ -64,7 +64,9 @@ Canonical model in `Blue_dream_agents/memory_schema.py`. Existing fields (`event
 | `POST /voice/speak` | `{ "text": ... }` → audio bytes | 0009 |
 | `GET /voice/capabilities` | `{ "transcribe": bool, "tts": bool }` | 0009 |
 | `POST /ingest/event` | multipart event JSON + screenshot; `X-Ingest-Token` header | 0010 |
-| `GET /memory/summaries?days=` | daily memory summaries (caregiver dashboard) | 0012 |
+| `GET /push/vapid-public-key` | `{ "enabled": bool, "key": string }` | 0013 |
+| `POST /push/subscribe`, `/push/unsubscribe`, `/push/test` | Web Push subscription lifecycle / test result | 0013 |
+| `GET /memory/summaries?days=` | newest-first, JSON-safe daily memory summaries | 0013 (pulled forward from 0012) |
 | `GET /alerts/recent?limit=` | recent alerts, all roles (caregiver dashboard) | 0012 |
 
 Existing contracts preserved: `POST /conversation/reset`, alert endpoints, geofence endpoints, `/storage` + `/capture` static mounts.
@@ -83,7 +85,7 @@ One client (`Blue_dream_agents/llm/client.py`, built on `openai.AsyncOpenAI`) se
 | Speech-to-text | `qwen3-asr-flash` | `gpt-4o-transcribe` | — (browser fallback) |
 | Text-to-speech | `qwen3-tts-flash` (spike-confirmed in 0005) | `gpt-4o-mini-tts` | — (browser fallback) |
 
-Env surface: `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `VIDEO_PROVIDER=qwen|gemini`, `SPATIAL_PROVIDER=qwen|gemini`, `TRANSCRIBE_PROVIDER=qwen|openai`, `TTS_PROVIDER=qwen|openai|none`; `DASHSCOPE_API_KEY`, `DASHSCOPE_BASE_URL`, `OPENAI_API_KEY`, `OLLAMA_BASE_URL`, `GEMINI_API_KEY`; OSS video bridge (`OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, `OSS_BUCKET`, `OSS_ENDPOINT`, `OSS_PRESIGN_TTL_SECONDS`); per-task model overrides (`LLM_TEXT_MODEL`, `LLM_SYNTHESIS_MODEL`, `LLM_VISION_MODEL`, `LLM_SPATIAL_MODEL`, `LLM_VIDEO_MODEL`, `LLM_EMBEDDING_MODEL`, `LLM_EMBEDDING_DIM`, `LLM_TRANSCRIBE_MODEL`, `LLM_TTS_MODEL`, `GEMINI_SPATIAL_MODEL`); request/runtime controls (`EMBED_BATCH_SIZE`, `LLM_DEFAULT_TEMPERATURE`, `LLM_DEFAULT_MAX_TOKENS`, `LLM_REQUEST_TIMEOUT_SECONDS`).
+Env surface: `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `VIDEO_PROVIDER=qwen|gemini`, `SPATIAL_PROVIDER=qwen|gemini`, `TRANSCRIBE_PROVIDER=qwen|openai`, `TTS_PROVIDER=qwen|openai|none`; `DASHSCOPE_API_KEY`, `DASHSCOPE_BASE_URL`, `OPENAI_API_KEY`, `OLLAMA_BASE_URL`, `GEMINI_API_KEY`; OSS video bridge (`OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, `OSS_BUCKET`, `OSS_ENDPOINT`, `OSS_PRESIGN_TTL_SECONDS`); Web Push and reminder sweep (`VAPID_PRIVATE_KEY`, `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT`, `REMINDER_SWEEP_SECONDS`); per-task model overrides (`LLM_TEXT_MODEL`, `LLM_SYNTHESIS_MODEL`, `LLM_VISION_MODEL`, `LLM_SPATIAL_MODEL`, `LLM_VIDEO_MODEL`, `LLM_EMBEDDING_MODEL`, `LLM_EMBEDDING_DIM`, `LLM_TRANSCRIBE_MODEL`, `LLM_TTS_MODEL`, `GEMINI_SPATIAL_MODEL`); request/runtime controls (`EMBED_BATCH_SIZE`, `LLM_DEFAULT_TEMPERATURE`, `LLM_DEFAULT_MAX_TOKENS`, `LLM_REQUEST_TIMEOUT_SECONDS`).
 
 Structured-output hardening (JSON fence stripping, embedded-JSON extraction, Pydantic validation, one strict retry) is provider-agnostic and applied on every structured call, with native JSON modes layered on top (`json_object` for DashScope/Ollama, `json_schema` strict structured outputs for GPT-5.6).
 
@@ -115,7 +117,7 @@ Retrieval flow:
 
 ## Proactive Channel
 
-`proactive_messages` records are created by triggers: safety alert stored (actionable patient warning), first sighting of the day (morning report), time reminder due, and event-triggered reminder matched (a just-ingested camera event satisfies an active event reminder's room + time window + behavior condition; LLM condition matching is gated by `EVENT_REMINDER_LLM_MATCH` with a deterministic room+window fallback). The web UI polls `GET /proactive/pending` every few seconds and renders messages as agent-initiated chat turns; acknowledgment marks them delivered. No push infrastructure. Geofence check-in messages are post-hackathon backlog; the existing geofence endpoints remain preserved contracts with no new behavior.
+`proactive_messages` records are created by triggers: safety alert stored (actionable patient warning), first sighting of the day (morning report), time reminder due, and event-triggered reminder matched (a just-ingested camera event satisfies an active event reminder's room + time window + behavior condition; LLM condition matching is gated by `EVENT_REMINDER_LLM_MATCH` with a deterministic room+window fallback). Web Push is a wake-up channel only: an insert attempts delivery to enabled patient subscriptions, while `GET /proactive/pending` remains the sole atomic pending-to-delivered claim and the sole in-app renderer. The React PWA polls every five seconds, immediately on a service-worker message, and acknowledges only after rendering. Geofence check-in messages are post-hackathon backlog; the existing geofence endpoints remain preserved contracts with no new behavior. The legacy FCM delivery code and `POST /devices/register` remain dormant compatibility surfaces after `Mobile/` removal.
 
 ## Critical Design Rules
 
@@ -124,7 +126,7 @@ Retrieval flow:
 - Patient-facing text never contains raw exception strings; failures log fully server-side and return a fixed reassuring message.
 - Conversation memory is not monitoring evidence and is never embedded.
 - `image_path` leaving the API is always a URL path.
-- The `/query`, `/conversation/reset`, alert, and geofence contracts must not break; the web UI and mobile app both consume them.
+- The `/query`, `/conversation/reset`, alert, geofence, `/devices/register`, `/storage`, and `/capture` contracts must not break; the PWA consumes the patient-facing subset while dormant compatibility surfaces remain intact.
 - Capture stays functional standalone; spec 0010 will add opt-in cloud ingestion via `INGEST_URL`.
 
 ## Intentional Design Decisions — Preserve During Rebuild
