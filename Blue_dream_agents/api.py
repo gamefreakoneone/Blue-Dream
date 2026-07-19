@@ -1,19 +1,22 @@
 import asyncio
+import datetime as dt
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import logging
 import os
 import sys
 from typing import Literal, Optional
+from uuid import uuid4
 
 # Add the current directory to sys.path to ensure imports work correctly
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:
+    from . import web_push
     from .conversation_memory import (
         append_conversation_turn,
         get_conversation_context,
@@ -34,12 +37,15 @@ try:
         ensure_conversation_indexes,
         ensure_events_indexes,
         ensure_profile_indexes,
+        ensure_push_indexes,
         ensure_reminder_indexes,
         ensure_memory_lifecycle_indexes,
+        get_memory_summaries_collection,
+        get_push_subscriptions_collection,
     )
     from .jeeves import run_single_query
     from .llm.client import close_llm_clients
-    from .llm.settings import get_provider_settings
+    from .llm.settings import get_provider_settings, load_project_env
     from .media_paths import normalize_stored_path, to_fs_path, to_url_path
     from .memory_lifecycle import pin_event, run_consolidation, unpin_event
     from .profile_memory import (
@@ -60,8 +66,9 @@ try:
         list_active as list_active_reminders,
         mark_done,
     )
-    from .timezone_utils import now_local
+    from .timezone_utils import now_local, to_local
 except ImportError:
+    import web_push
     from conversation_memory import (
         append_conversation_turn,
         get_conversation_context,
@@ -82,12 +89,15 @@ except ImportError:
         ensure_conversation_indexes,
         ensure_events_indexes,
         ensure_profile_indexes,
+        ensure_push_indexes,
         ensure_reminder_indexes,
         ensure_memory_lifecycle_indexes,
+        get_memory_summaries_collection,
+        get_push_subscriptions_collection,
     )
     from jeeves import run_single_query
     from llm.client import close_llm_clients
-    from llm.settings import get_provider_settings
+    from llm.settings import get_provider_settings, load_project_env
     from media_paths import normalize_stored_path, to_fs_path, to_url_path
     from memory_lifecycle import pin_event, run_consolidation, unpin_event
     from profile_memory import (
@@ -108,11 +118,34 @@ except ImportError:
         list_active as list_active_reminders,
         mark_done,
     )
-    from timezone_utils import now_local
+    from timezone_utils import now_local, to_local
 
 logger = logging.getLogger(__name__)
 GENERIC_ERROR_DETAIL = "Something went wrong. Please try again in a moment."
 _background_tasks: set[asyncio.Task] = set()
+
+
+def _reminder_sweep_seconds() -> int:
+    load_project_env()
+    raw = (os.getenv("REMINDER_SWEEP_SECONDS") or "30").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("Invalid REMINDER_SWEEP_SECONDS=%r; using 30", raw)
+        return 30
+    if value < 0:
+        logger.warning("REMINDER_SWEEP_SECONDS cannot be negative; using 30")
+        return 30
+    return value
+
+
+async def _reminder_sweep_loop(seconds: int) -> None:
+    while True:
+        await asyncio.sleep(seconds)
+        try:
+            await check_due_reminders(now_local())
+        except Exception:
+            logger.exception("Reminder sweep failed")
 
 # Configure logging to show INFO level for our modules
 logging.basicConfig(
@@ -123,6 +156,7 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    reminder_sweep_task: Optional[asyncio.Task] = None
     try:
         await ensure_events_indexes()
         await initialize_alert_indexes()
@@ -131,6 +165,7 @@ async def lifespan(app: FastAPI):
         await ensure_reminder_indexes()
         await ensure_memory_lifecycle_indexes()
         await initialize_proactive_indexes()
+        await ensure_push_indexes()
     except Exception as exc:
         logger.warning("MongoDB index setup skipped or failed: %s", exc)
 
@@ -141,9 +176,21 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Startup memory consolidation failed; server will continue")
 
+    sweep_seconds = _reminder_sweep_seconds()
+    if sweep_seconds:
+        reminder_sweep_task = asyncio.create_task(
+            _reminder_sweep_loop(sweep_seconds), name="reminder-sweep"
+        )
+        logger.info("Reminder sweep enabled every %s seconds", sweep_seconds)
+    else:
+        logger.info("Reminder sweep disabled by REMINDER_SWEEP_SECONDS=0")
+
     try:
         yield
     finally:
+        if reminder_sweep_task is not None:
+            reminder_sweep_task.cancel()
+            await asyncio.gather(reminder_sweep_task, return_exceptions=True)
         if _background_tasks:
             await asyncio.gather(*list(_background_tasks), return_exceptions=True)
         try:
@@ -196,6 +243,25 @@ class GeofenceEventRequest(BaseModel):
     latitude: float
     longitude: float
     device_id: Optional[str] = None
+
+
+class WebPushKeys(BaseModel):
+    p256dh: str = Field(min_length=1)
+    auth: str = Field(min_length=1)
+
+
+class WebPushSubscription(BaseModel):
+    endpoint: str = Field(min_length=1)
+    keys: WebPushKeys
+
+
+class PushSubscribeRequest(BaseModel):
+    subscription: WebPushSubscription
+    role: Literal["patient"] = "patient"
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str = Field(min_length=1)
 
 
 async def _extract_turn_memory_safely(
@@ -302,6 +368,41 @@ async def consolidate_memory_events():
         return (await run_consolidation()).model_dump(mode="json")
     except Exception:
         logger.exception("Memory consolidation endpoint failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
+def _summary_value(value):
+    if isinstance(value, dt.datetime):
+        return to_local(value).isoformat()
+    if isinstance(value, dt.date):
+        return value.isoformat()
+    return value
+
+
+@app.get("/memory/summaries")
+async def get_memory_summaries(days: int = Query(default=7, ge=1, le=365)):
+    try:
+        cutoff = now_local().date() - dt.timedelta(days=days - 1)
+        cursor = get_memory_summaries_collection().find(
+            {"date": {"$gte": cutoff.isoformat()}}
+        ).sort([("date", -1), ("room_number", 1)])
+        summaries = []
+        async for document in cursor:
+            source_event_ids = document.get("source_event_ids") or []
+            summaries.append(
+                {
+                    "summary_id": str(document.get("summary_id") or ""),
+                    "date": _summary_value(document.get("date")),
+                    "room_number": document.get("room_number"),
+                    "room_name": str(document.get("room_name") or ""),
+                    "text": str(document.get("text") or ""),
+                    "source_event_count": len(source_event_ids),
+                    "created_at": _summary_value(document.get("created_at")),
+                }
+            )
+        return {"summaries": summaries}
+    except Exception:
+        logger.exception("Memory summary list failed")
         raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 
@@ -421,6 +522,92 @@ async def acknowledge_proactive_message(message_id: str):
         raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 
+@app.get("/push/vapid-public-key")
+async def get_vapid_public_key():
+    return web_push.get_public_key_status()
+
+
+@app.post("/push/subscribe")
+async def subscribe_to_push(request: PushSubscribeRequest, http_request: Request):
+    try:
+        await web_push.initialize_push_indexes()
+        now = now_local()
+        endpoint = request.subscription.endpoint.strip()
+        if not endpoint:
+            raise HTTPException(status_code=400, detail="endpoint is required")
+        subscription_id = f"ps_{uuid4().hex[:12]}"
+        collection = get_push_subscriptions_collection()
+        await collection.update_one(
+            {"endpoint": endpoint},
+            {
+                "$set": {
+                    "keys": request.subscription.keys.model_dump(),
+                    "role": request.role,
+                    "user_agent": http_request.headers.get("user-agent", ""),
+                    "enabled": True,
+                    "updated_at": now,
+                },
+                "$setOnInsert": {
+                    "subscription_id": subscription_id,
+                    "endpoint": endpoint,
+                    "created_at": now,
+                    "last_result": None,
+                },
+            },
+            upsert=True,
+        )
+        stored = await collection.find_one({"endpoint": endpoint})
+        return {
+            "ok": True,
+            "subscription_id": str((stored or {}).get("subscription_id") or subscription_id),
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Push subscription registration failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
+@app.post("/push/unsubscribe")
+async def unsubscribe_from_push(request: PushUnsubscribeRequest):
+    try:
+        await web_push.initialize_push_indexes()
+        endpoint = request.endpoint.strip()
+        if not endpoint:
+            raise HTTPException(status_code=400, detail="endpoint is required")
+        await get_push_subscriptions_collection().update_one(
+            {"endpoint": endpoint},
+            {"$set": {"enabled": False, "updated_at": now_local()}},
+        )
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Push subscription removal failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
+@app.post("/push/test")
+async def send_test_push():
+    try:
+        test_id = f"test_{uuid4().hex[:12]}"
+        result = await web_push.send_to_patient_subscriptions(
+            {
+                "title": "Memoria notifications are ready",
+                "body": "Gentle reminders are turned on.",
+                "tag": test_id,
+                "url": "/#chat",
+                "image": None,
+                "trigger_type": "test",
+                "message_id": test_id,
+            }
+        )
+        return {"status": result["status"], "sent": int(result.get("sent", 0))}
+    except Exception:
+        logger.exception("Test push failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
 @app.post("/devices/register")
 async def register_patient_device(request: DeviceRegistrationRequest):
     if not request.device_id.strip():
@@ -530,12 +717,16 @@ if storage_path is not None and storage_path.exists():
 else:
     print(f"Warning: Storage directory not found at {storage_path}")
 
-# Mount the UI directory as static files (Last to act as fallback/root)
+# Mount the built UI as static files (last to act as fallback/root).
 ui_path = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "UI"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "UI", "dist"
 )
 
 if os.path.exists(ui_path):
     app.mount("/", StaticFiles(directory=ui_path, html=True), name="ui")
 else:
-    print(f"Warning: UI directory not found at {ui_path}")
+    logger.warning(
+        "UI build not found at %s; the API will run without the web UI. "
+        "Run: cd UI && npm run build",
+        ui_path,
+    )

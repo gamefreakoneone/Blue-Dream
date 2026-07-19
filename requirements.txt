@@ -27,6 +27,7 @@ tzdata==2026.3        # IANA timezone database fallback for Windows
 # Web Server
 fastapi==0.139.2      # Backend API
 uvicorn==0.51.0       # ASGI Server
+pywebpush==2.3.0      # Standards-based Web Push delivery with VAPID
 
 # Database
 motor==3.7.1          # Async MongoDB driver

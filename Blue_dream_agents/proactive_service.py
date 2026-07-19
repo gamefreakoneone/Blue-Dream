@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
+from . import web_push
 from .db_client import (
     ensure_proactive_indexes as ensure_proactive_indexes_in_db,
     get_events_collection,
@@ -140,6 +141,12 @@ async def create_message(
         if existing is None:
             raise
         return str(existing["message_id"])
+    try:
+        await web_push.send_for_proactive_message(document)
+    except Exception:
+        logger.exception(
+            "Web push send failed for %s; message remains pending", message_id
+        )
     return message_id
 
 

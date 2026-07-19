@@ -84,6 +84,11 @@ def get_proactive_messages_collection():
     return get_mongo_client().dementia_assistance.proactive_messages
 
 
+def get_push_subscriptions_collection():
+    """Return browser Web Push subscriptions for the patient experience."""
+    return get_mongo_client().dementia_assistance.push_subscriptions
+
+
 async def ensure_events_indexes() -> None:
     """Create MongoDB indexes used by ingestion and retrieval paths."""
 
@@ -183,4 +188,12 @@ async def ensure_proactive_indexes() -> None:
         name="related_id_1",
         unique=True,
         partialFilterExpression={"related_id": {"$type": "string"}},
+    )
+
+
+async def ensure_push_indexes() -> None:
+    """Create the unique endpoint index used by browser subscriptions."""
+
+    await get_push_subscriptions_collection().create_index(
+        [("endpoint", 1)], name="endpoint_1", unique=True
     )

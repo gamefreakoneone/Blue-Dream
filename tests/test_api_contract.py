@@ -1,3 +1,5 @@
+import threading
+
 from fastapi.testclient import TestClient
 
 
@@ -117,6 +119,12 @@ def test_lifespan_initializes_and_closes_clients(monkeypatch, api_module):
     )
     monkeypatch.setattr(
         api_module,
+        "ensure_push_indexes",
+        lambda: record("push"),
+    )
+    monkeypatch.setattr(api_module, "_reminder_sweep_seconds", lambda: 0)
+    monkeypatch.setattr(
+        api_module,
         "close_llm_clients",
         lambda: record("llm-close"),
     )
@@ -137,6 +145,7 @@ def test_lifespan_initializes_and_closes_clients(monkeypatch, api_module):
         "reminders",
         "lifecycle",
         "proactive",
+        "push",
         "llm-close",
         "mongo-close",
     ]
@@ -152,6 +161,7 @@ def test_lifespan_tolerates_index_failure(monkeypatch, api_module):
         calls.append(name)
 
     monkeypatch.setattr(api_module, "ensure_events_indexes", fail_indexes)
+    monkeypatch.setattr(api_module, "_reminder_sweep_seconds", lambda: 0)
     monkeypatch.setattr(
         api_module,
         "close_llm_clients",
@@ -167,3 +177,44 @@ def test_lifespan_tolerates_index_failure(monkeypatch, api_module):
         pass
 
     assert calls == ["llm-close", "mongo-close"]
+
+
+def test_reminder_sweep_task_starts_and_is_cancelled(monkeypatch, api_module):
+    started = threading.Event()
+    stopped = threading.Event()
+
+    async def fail_indexes():
+        raise RuntimeError("offline test")
+
+    async def sweep(seconds):
+        assert seconds == 12
+        started.set()
+        try:
+            await api_module.asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    async def noop():
+        return None
+
+    monkeypatch.setattr(api_module, "ensure_events_indexes", fail_indexes)
+    monkeypatch.setattr(api_module, "_reminder_sweep_seconds", lambda: 12)
+    monkeypatch.setattr(api_module, "_reminder_sweep_loop", sweep)
+    monkeypatch.setattr(api_module, "close_llm_clients", noop)
+    monkeypatch.setattr(api_module, "close_mongo_client", noop)
+
+    with TestClient(api_module.app):
+        assert started.wait(timeout=1)
+
+    assert stopped.wait(timeout=1)
+
+
+def test_reminder_sweep_interval_validation(monkeypatch, api_module):
+    monkeypatch.setenv("REMINDER_SWEEP_SECONDS", "invalid")
+    assert api_module._reminder_sweep_seconds() == 30
+
+    monkeypatch.setenv("REMINDER_SWEEP_SECONDS", "-4")
+    assert api_module._reminder_sweep_seconds() == 30
+
+    monkeypatch.setenv("REMINDER_SWEEP_SECONDS", "0")
+    assert api_module._reminder_sweep_seconds() == 0

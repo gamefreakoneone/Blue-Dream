@@ -78,6 +78,8 @@ def client(monkeypatch, api_module):
     monkeypatch.setattr(api_module, "ensure_reminder_indexes", noop)
     monkeypatch.setattr(api_module, "ensure_memory_lifecycle_indexes", noop)
     monkeypatch.setattr(api_module, "initialize_proactive_indexes", noop)
+    monkeypatch.setattr(api_module, "ensure_push_indexes", noop)
+    monkeypatch.setattr(api_module, "_reminder_sweep_seconds", lambda: 0)
     monkeypatch.setattr(api_module, "close_llm_clients", noop)
     monkeypatch.setattr(api_module, "close_mongo_client", noop)
     monkeypatch.setattr(api_module, "run_single_query", canned_query)

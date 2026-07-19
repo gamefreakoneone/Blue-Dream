@@ -130,11 +130,17 @@ def configure_message_store(monkeypatch, collection, now):
     async def noop_indexes():
         return None
 
+    async def noop_push(document):
+        return None
+
     monkeypatch.setattr(proactive_service, "initialize_proactive_indexes", noop_indexes)
     monkeypatch.setattr(
         proactive_service, "get_proactive_messages_collection", lambda: collection
     )
     monkeypatch.setattr(proactive_service, "now_local", lambda: now)
+    monkeypatch.setattr(
+        proactive_service.web_push, "send_for_proactive_message", noop_push
+    )
 
 
 def test_message_creation_dedupe_schema_and_stored_path(monkeypatch):
