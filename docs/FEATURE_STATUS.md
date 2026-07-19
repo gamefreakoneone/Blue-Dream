@@ -19,7 +19,7 @@ Two hard deadlines govern sequencing: **Qwen Cloud submission July 20, 2026, 2pm
 | 0010 | Alibaba Deployment (stretch) | Not started | `docs/specs/0010-alibaba-deployment/status.md` | Docker/compose, `/ingest/event`, beginner ECS walkthrough. Skippable: DashScope usage already satisfies proof. |
 | 0011 | Qwen Submission | Not started | `docs/specs/0011-qwen-submission/status.md` | README rewrite, architecture diagram, <3min video, checklist. Submit by ~noon PT Jul 20. |
 | 0012 | OpenAI Week | Not started | `docs/specs/0012-openai-week/status.md` | GPT-5.6 provider flip, caregiver dashboard, submission package. Submit by ~3pm PT Jul 21. `GET /memory/summaries` is delivered early by 0013. |
-| 0013 | Web UI Rehaul | **Implemented — pending demo-morning phone validation** | `docs/specs/0013-web-ui-rehaul/status.md` | Phase commits `57c3bc7`, `adbff9f`, `e6e692b`, `20d5854`; final cleanup/evidence is recorded in the spec status. Implemented before 0009 with no cut lines exercised. Phone-only PWA install, closed-app push, notification tap, lock-screen, and adb checks remain explicitly pending; change to Completed only after that evidence is recorded. |
+| 0013 | Web UI Rehaul | **Implemented — pending demo-morning phone validation** | `docs/specs/0013-web-ui-rehaul/status.md` | Phase commits `57c3bc7`, `adbff9f`, `e6e692b`, `20d5854`, `63ca813`. Implemented before 0009 with no cut lines exercised. Phone-only PWA install, closed-app push, notification tap, lock-screen, and adb checks remain explicitly pending; change to Completed only after that evidence is recorded. |
 
 ## Status Definitions
 
