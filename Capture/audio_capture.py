@@ -162,6 +162,8 @@ if __name__ == "__main__":
     # if device_index == -1:
     #     device_index = None
     device_index = -1
+    if device_index == -1:
+        device_index = None
     
     recorder = AudioRecorder(device_index=device_index)
     

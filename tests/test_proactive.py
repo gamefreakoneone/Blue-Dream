@@ -137,7 +137,7 @@ def configure_message_store(monkeypatch, collection, now):
     monkeypatch.setattr(proactive_service, "now_local", lambda: now)
 
 
-def test_message_creation_dedupe_schema_and_url_path(monkeypatch):
+def test_message_creation_dedupe_schema_and_stored_path(monkeypatch):
     now = dt.datetime(2026, 7, 18, 8, tzinfo=LOCAL_TZ)
     collection = FakeCollection()
     configure_message_store(monkeypatch, collection, now)
@@ -163,7 +163,7 @@ def test_message_creation_dedupe_schema_and_url_path(monkeypatch):
     message = collection.documents[0]
     assert message["message_id"].startswith("pm_")
     assert message["text"] == "Please return to the kitchen."
-    assert message["image_path"] == "/storage/highlighted/stove.jpg"
+    assert message["image_path"] == "Storage/highlighted/stove.jpg"
     assert message["status"] == "pending"
     assert message["expires_at"] == now + dt.timedelta(minutes=60)
 
@@ -227,8 +227,8 @@ def test_due_reminders_materialize_then_roll_forward(monkeypatch):
     async def due_reminders(value):
         return [due]
 
-    async def complete(reminder_id, *, now=None):
-        completed.append((reminder_id, now))
+    async def complete(reminder_id, *, mode, now=None):
+        completed.append((reminder_id, mode, now))
         return True
 
     monkeypatch.setattr(proactive_service, "get_due_reminders", due_reminders)
@@ -237,7 +237,10 @@ def test_due_reminders_materialize_then_roll_forward(monkeypatch):
     run(proactive_service.check_due_reminders(now))
 
     assert len(collection.documents) == 1
-    assert completed == [("daily-1", now), ("daily-1", now)]
+    assert completed == [
+        ("daily-1", "delivery", now),
+        ("daily-1", "delivery", now),
+    ]
     assert collection.documents[0]["related_id"] == f"daily-1_{now.isoformat()}"
 
 
@@ -360,7 +363,7 @@ def test_event_reminder_llm_match_false_fallback_dedupe_and_rearm(monkeypatch):
         assert room_number == 1
         return candidates
 
-    async def complete(reminder_id, *, now=None):
+    async def complete(reminder_id, *, mode, now=None):
         completed.append(reminder_id)
         return True
 
@@ -423,8 +426,8 @@ def test_dated_event_reminder_marks_done(monkeypatch):
     async def matchable(value, *, room_number=None):
         return [_event_reminder("2026-07-18")]
 
-    async def complete(reminder_id, *, now=None):
-        completed.append((reminder_id, now))
+    async def complete(reminder_id, *, mode, now=None):
+        completed.append((reminder_id, mode, now))
         return True
 
     monkeypatch.setattr(proactive_service, "get_matchable_event_reminders", matchable)
@@ -435,7 +438,7 @@ def test_dated_event_reminder_marks_done(monkeypatch):
         lambda: SimpleNamespace(event_reminder_llm_match=False, proactive_expiry_minutes=60),
     )
     run(proactive_service.maybe_event_reminders(_event(now)))
-    assert completed == [("water-1", now)]
+    assert completed == [("water-1", "delivery", now)]
 
 
 def test_proactive_indexes(monkeypatch):
@@ -467,7 +470,7 @@ def test_proactive_endpoint_contracts(client, monkeypatch, api_module):
                 "message_id": "pm_1",
                 "trigger_type": "reminder",
                 "text": "Take your medicine.",
-                "image_path": None,
+                "image_path": "/storage/highlighted/legacy-stove.jpg",
                 "action": None,
                 "created_at": now.isoformat(),
                 "status": "delivered",
@@ -493,7 +496,7 @@ def test_proactive_endpoint_contracts(client, monkeypatch, api_module):
             "message_id": "pm_1",
             "trigger_type": "reminder",
             "text": "Take your medicine.",
-            "image_path": None,
+            "image_path": "/storage/highlighted/legacy-stove.jpg",
             "action": None,
             "created_at": checks[0].isoformat(),
         }

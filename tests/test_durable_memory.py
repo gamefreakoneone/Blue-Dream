@@ -5,7 +5,12 @@ from types import SimpleNamespace
 
 from bson import ObjectId
 
-from Blue_dream_agents import conversation_memory, jeeves, profile_memory
+from Blue_dream_agents import (
+    conversation_memory,
+    jeeves,
+    profile_memory,
+    reminder_service,
+)
 from Blue_dream_agents.reminder_service import (
     EventTrigger,
     ReminderCreate,
@@ -37,6 +42,10 @@ def _matches(document, query):
         if isinstance(expected, dict):
             if "$ne" in expected and actual == expected["$ne"]:
                 return False
+            if "$gte" in expected and not (actual is not None and actual >= expected["$gte"]):
+                return False
+            if "$lt" in expected and not (actual is not None and actual < expected["$lt"]):
+                return False
             if "$lte" in expected and not (actual is not None and actual <= expected["$lte"]):
                 return False
             if "$in" in expected and actual not in expected["$in"]:
@@ -67,6 +76,10 @@ class FakeCursor:
                 ),
                 reverse=sort_direction == -1,
             )
+        return self
+
+    def limit(self, count):
+        self.documents = self.documents[:count]
         return self
 
     def __aiter__(self):
@@ -401,11 +414,16 @@ def test_general_prompt_includes_profile_block(monkeypatch):
         captured.update(kwargs)
         return "Sarah is visiting."
 
+    async def reminders():
+        return "Today's active reminders:\n- Reminder: Take medicine (due 9:00 AM)"
+
     monkeypatch.setattr(jeeves, "render_profile_block", profile_block)
+    monkeypatch.setattr(jeeves, "render_today_reminder_block", reminders)
     monkeypatch.setattr(jeeves, "invoke_text", text)
     response = _run(jeeves._handle_general_query("Who is visiting?"))
     assert response.text == "Sarah is visiting."
     assert "Daughter is Sarah" in captured["system_prompt"]
+    assert "Take medicine" in captured["system_prompt"]
     assert "fixed home CCTV" in captured["system_prompt"]
 
 
@@ -429,16 +447,102 @@ def test_insufficient_semantic_evidence_can_fall_back_to_profile(monkeypatch):
         return "What you know about the patient:\n- (person) Daughter is Sarah"
 
     async def synthesize(query, result, **kwargs):
+        assert "Daughter is Sarah" in kwargs["working_memory_block"]
+        assert "Take medicine" in kwargs["working_memory_block"]
         return "Your daughter's name is Sarah."
+
+    async def reminders():
+        return "Today's active reminders:\n- Reminder: Take medicine"
 
     monkeypatch.setattr(jeeves, "run_semantic_retrieval", retrieval)
     monkeypatch.setattr(jeeves, "_judge_semantic_retrieval", judge)
     monkeypatch.setattr(jeeves, "render_profile_block", block)
+    monkeypatch.setattr(jeeves, "render_today_reminder_block", reminders)
     monkeypatch.setattr(jeeves, "_synthesize_semantic_answer", synthesize)
 
     response = _run(jeeves._handle_semantic_query("What is my daughter's name?"))
     assert response.text == "Your daughter's name is Sarah."
     assert response.data["profile_fallback_used"] is True
+
+
+def test_semantic_synthesis_includes_profile_and_reminder_blocks(monkeypatch):
+    from Blue_dream_agents.semantic_search import SemanticSearchResult
+
+    captured = {}
+
+    async def profile_block():
+        return "What you know about the patient:\n- Prefers tea"
+
+    async def reminders():
+        return "Today's active reminders:\n- Reminder: Call Sarah"
+
+    async def text(**kwargs):
+        captured.update(kwargs)
+        return "You prefer tea, and you need to call Sarah today."
+
+    monkeypatch.setattr(jeeves, "render_unpinned_profile_block", profile_block)
+    monkeypatch.setattr(jeeves, "render_today_reminder_block", reminders)
+    monkeypatch.setattr(jeeves, "invoke_text", text)
+    result = SemanticSearchResult(
+        success=False,
+        text="",
+        query="What do I need today?",
+        match_count=0,
+        top_k=5,
+        matches=[],
+    )
+
+    answer = _run(jeeves._synthesize_semantic_answer(result.query, result))
+    assert "call Sarah" in answer
+    assert "Prefers tea" in captured["system_prompt"]
+    assert "Call Sarah" in captured["system_prompt"]
+
+
+def test_object_and_time_routes_receive_full_working_memory(monkeypatch):
+    from Blue_dream_agents.jeeves import QueryRoute
+    from Blue_dream_agents.object_detector import SearchResult
+    from Blue_dream_agents.time_agent import TimeResult
+
+    captured = {}
+
+    async def resolve(query, conversation_context):
+        return query, None
+
+    async def profile_block():
+        return "What you know about the patient:\n- Daughter is Sarah"
+
+    async def reminders():
+        return "Today's active reminders:\n- Reminder: Take medicine"
+
+    async def object_query(query, *, working_memory_block=""):
+        captured["object"] = working_memory_block
+        return SearchResult(found=False, description="Not found")
+
+    async def time_query(query, *, working_memory_block=""):
+        captured["time"] = working_memory_block
+        return TimeResult(response_type="general", text="Today was quiet", data={})
+
+    monkeypatch.setattr(jeeves, "_resolve_query_with_context", resolve)
+    monkeypatch.setattr(jeeves, "render_profile_block", profile_block)
+    monkeypatch.setattr(jeeves, "render_today_reminder_block", reminders)
+    monkeypatch.setattr(jeeves, "run_object_query", object_query)
+    monkeypatch.setattr(jeeves, "run_time_query", time_query)
+
+    async def object_route(query):
+        return QueryRoute(intent="object", reason="test")
+
+    monkeypatch.setattr(jeeves, "_route_query", object_route)
+    _run(jeeves.run_single_query("Where are my keys?"))
+
+    async def time_route(query):
+        return QueryRoute(intent="time", reason="test")
+
+    monkeypatch.setattr(jeeves, "_route_query", time_route)
+    _run(jeeves.run_single_query("What happened today?"))
+
+    assert "Daughter is Sarah" in captured["object"]
+    assert "Take medicine" in captured["object"]
+    assert captured["time"] == captured["object"]
 
 
 def test_reminder_round_trip_due_boundary_and_daily_rollover():
@@ -459,7 +563,9 @@ def test_reminder_round_trip_due_boundary_and_daily_rollover():
     assert len(_run(service.get_due(due))) == 1
     assert _run(service.get_due(due - dt.timedelta(seconds=1))) == []
 
-    assert _run(service.mark_done(created["reminder_id"], now=due)) is True
+    assert _run(
+        service.mark_done(created["reminder_id"], mode="delivery", now=due)
+    ) is True
     stored = collection.documents[0]
     assert stored["status"] == "active"
     assert stored["due_at"] == due + dt.timedelta(days=1)
@@ -481,7 +587,80 @@ def test_reminder_round_trip_due_boundary_and_daily_rollover():
     )
     assert event["event_trigger"]["valid_date"] == "2026-07-19"
     assert event["event_trigger"]["room_number"] == 1
-    assert _run(service.mark_done(event["reminder_id"])) is True
+    assert _run(service.mark_done(event["reminder_id"], mode="delivery")) is True
+
+
+def test_patient_completion_archives_daily_reminder():
+    collection = FakeCollection()
+    service = ReminderService(collection)
+    due = dt.datetime(2026, 7, 18, 8, tzinfo=LOCAL_TZ)
+    created = _run(
+        service.create(
+            ReminderCreate(text="Take pill", due_at=due, recurrence="daily")
+        )
+    )
+
+    assert _run(
+        service.mark_done(created["reminder_id"], mode="patient", now=due)
+    ) is True
+    stored = collection.documents[0]
+    assert stored["status"] == "archived"
+    assert stored["archived_at"] == due
+    assert stored["due_at"] == due
+
+
+def test_today_reminders_are_indexed_ordered_and_capped(monkeypatch):
+    today = dt.datetime(2026, 7, 18, 12, tzinfo=LOCAL_TZ)
+    documents = []
+    for hour in (8, 9, 10, 11):
+        documents.append(
+            {
+                "reminder_id": f"time-{hour}",
+                "text": f"Time reminder {hour}",
+                "trigger_type": "time",
+                "due_at": today.replace(hour=hour),
+                "status": "active",
+                "created_at": today,
+            }
+        )
+    for index, valid_date in enumerate((None, "2026-07-18", "2026-07-19")):
+        documents.append(
+            {
+                "reminder_id": f"event-{index}",
+                "text": f"Event reminder {index}",
+                "trigger_type": "event",
+                "due_at": None,
+                "event_trigger": {"valid_date": valid_date},
+                "status": "active",
+                "created_at": today + dt.timedelta(minutes=index),
+            }
+        )
+    service = ReminderService(FakeCollection(documents))
+
+    reminders = _run(service.get_today(today, limit=5))
+    assert [item["reminder_id"] for item in reminders] == [
+        "time-8",
+        "time-9",
+        "time-10",
+        "time-11",
+        "event-0",
+    ]
+
+    async def today_reminders(now=None, *, limit=5):
+        return reminders
+
+    monkeypatch.setattr(reminder_service, "get_today_reminders", today_reminders)
+    block = _run(reminder_service.render_today_reminder_block(today))
+    assert block.count("- Reminder:") == 5
+    assert "due 8:00 AM" in block
+
+
+def test_today_reminder_block_failure_is_omitted(monkeypatch):
+    async def fail(now=None, *, limit=5):
+        raise RuntimeError("SENTINEL_REMINDER_SECRET")
+
+    monkeypatch.setattr(reminder_service, "get_today_reminders", fail)
+    assert _run(reminder_service.render_today_reminder_block()) == ""
 
 
 def test_matchable_event_reminder_date_window_and_overnight():
@@ -567,7 +746,11 @@ def test_new_endpoint_contracts(client, monkeypatch, api_module):
             }
         ]
 
-    async def true_for_known(identifier):
+    completion_modes = []
+
+    async def true_for_known(identifier, **kwargs):
+        if "mode" in kwargs:
+            completion_modes.append(kwargs["mode"])
         return identifier in {"fact-1", "reminder-1"}
 
     async def reminders():
@@ -626,6 +809,7 @@ def test_new_endpoint_contracts(client, monkeypatch, api_module):
     assert created.status_code == 200
     assert created.json()["trigger_type"] == "time"
     assert client.post("/reminders/reminder-1/done").json() == {"ok": True}
+    assert completion_modes == ["patient"]
     assert client.post("/reminders/missing/done").status_code == 404
 
     invalid = client.post(

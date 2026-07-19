@@ -57,10 +57,14 @@ def test_upload_deduplicates_and_presigns(monkeypatch, tmp_path):
 
     key = oss_media.upload_video(str(video))
     url = oss_media.presigned_url(key)
+    explicit_url = oss_media.presigned_url(key, ttl=120)
     assert key == "Storage/video_recordings/camera_1/clip.mp4"
     assert bucket.uploads == []
-    assert bucket.signs == [("GET", key, 900)]
+    assert bucket.signs == [("GET", key, 900), ("GET", key, 120)]
     assert url.startswith("https://memoria.example/Storage/")
+    assert explicit_url.startswith("https://memoria.example/Storage/")
+    with pytest.raises(RuntimeError, match="between 1 and 86400"):
+        oss_media.presigned_url(key, ttl=0)
 
 
 def test_qwen_failure_falls_directly_to_full_video_gemini(monkeypatch):

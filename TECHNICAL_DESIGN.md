@@ -83,7 +83,7 @@ One client (`Blue_dream_agents/llm/client.py`, built on `openai.AsyncOpenAI`) se
 | Speech-to-text | `qwen3-asr-flash` | `gpt-4o-transcribe` | — (browser fallback) |
 | Text-to-speech | `qwen3-tts-flash` (spike-confirmed in 0005) | `gpt-4o-mini-tts` | — (browser fallback) |
 
-Env surface: `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `VIDEO_PROVIDER=qwen|gemini`, `SPATIAL_PROVIDER=qwen|gemini`, `TRANSCRIBE_PROVIDER=qwen|openai`, `TTS_PROVIDER=qwen|openai|none`; `DASHSCOPE_API_KEY`, `DASHSCOPE_BASE_URL`, `OPENAI_API_KEY`, `OLLAMA_BASE_URL`, `GEMINI_API_KEY`; OSS video bridge (`OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, `OSS_BUCKET`, `OSS_ENDPOINT`, `OSS_PRESIGN_TTL_SECONDS`); per-task model overrides (`LLM_TEXT_MODEL`, `LLM_VISION_MODEL`, `LLM_SPATIAL_MODEL`, `LLM_VIDEO_MODEL`, `LLM_EMBEDDING_MODEL`, `LLM_EMBEDDING_DIM`, ...).
+Env surface: `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `VIDEO_PROVIDER=qwen|gemini`, `SPATIAL_PROVIDER=qwen|gemini`, `TRANSCRIBE_PROVIDER=qwen|openai`, `TTS_PROVIDER=qwen|openai|none`; `DASHSCOPE_API_KEY`, `DASHSCOPE_BASE_URL`, `OPENAI_API_KEY`, `OLLAMA_BASE_URL`, `GEMINI_API_KEY`; OSS video bridge (`OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, `OSS_BUCKET`, `OSS_ENDPOINT`, `OSS_PRESIGN_TTL_SECONDS`); per-task model overrides (`LLM_TEXT_MODEL`, `LLM_SYNTHESIS_MODEL`, `LLM_VISION_MODEL`, `LLM_SPATIAL_MODEL`, `LLM_VIDEO_MODEL`, `LLM_EMBEDDING_MODEL`, `LLM_EMBEDDING_DIM`, `LLM_TRANSCRIBE_MODEL`, `LLM_TTS_MODEL`, `GEMINI_SPATIAL_MODEL`); request/runtime controls (`EMBED_BATCH_SIZE`, `LLM_DEFAULT_TEMPERATURE`, `LLM_DEFAULT_MAX_TOKENS`, `LLM_REQUEST_TIMEOUT_SECONDS`).
 
 Structured-output hardening (JSON fence stripping, embedded-JSON extraction, Pydantic validation, one strict retry) is provider-agnostic and applied on every structured call, with native JSON modes layered on top (`json_object` for DashScope/Ollama, `json_schema` strict structured outputs for GPT-5.6).
 
@@ -125,7 +125,7 @@ Retrieval flow:
 - Conversation memory is not monitoring evidence and is never embedded.
 - `image_path` leaving the API is always a URL path.
 - The `/query`, `/conversation/reset`, alert, and geofence contracts must not break; the web UI and mobile app both consume them.
-- Capture stays functional standalone; cloud ingestion is opt-in via `INGEST_URL`.
+- Capture stays functional standalone; spec 0010 will add opt-in cloud ingestion via `INGEST_URL`.
 
 ## Intentional Design Decisions — Preserve During Rebuild
 
@@ -136,6 +136,7 @@ Behaviors that look like bugs but are deliberate; do not "fix" them without a sp
 - **fps=20 and default-microphone audio** (spec 0004): accepted hardware/single-occupant tradeoffs (two-room home, one active camera at a time). Do not add per-camera microphone plumbing; an optional `device_index` passthrough is the ceiling.
 - **Gemini video fallback chain** (`GEMINI_VIDEO_FALLBACK_MODELS` + retry env vars, spec 0003): a workaround for flaky preview models; preserve the fallback chain wherever Gemini remains the video/spatial fallback.
 - **Conversation memory in MongoDB** (spec 0006): a conscious reversal of the archived pre-rebuild rule, required for cross-session persistence. The two original boundaries still hold: chat turns are never embedded in Chroma and never treated as monitoring evidence.
+- **Fall-alert targeting** (spec 0004): YOLO fall alerts intentionally target caretakers only. Patient-facing proactive warnings are created from actionable hazard alerts produced by the safety agent; do not redirect fall alerts to the patient channel.
 
 Two implementation cautions for cleanups that *are* wanted: alert/index initialization must run once per process (alerts are created from both the API server and the capture pipeline process — FastAPI lifespan alone does not cover capture), and both `uvicorn Blue_dream_agents.api:app` and `python Capture/camera_feed.py` invocations must keep working after any import-pattern cleanup.
 

@@ -204,6 +204,103 @@ def test_safety_assessment_creates_proactive_warning_with_image(monkeypatch):
     ]
 
 
+def test_alert_delivery_failures_store_fixed_details(monkeypatch):
+    collection = FakeAlertCollection()
+
+    async def noop_indexes():
+        return None
+
+    async def build_alert(event, assessment):
+        return {
+            "alert_id": "alert-failure",
+            "event_id": event.event_id,
+            "target_role": "patient",
+            "severity": assessment.severity,
+            "body": assessment.patient_message,
+            "status": "open",
+        }
+
+    async def noop_proactive(alert):
+        return None
+
+    async def fail_delivery(alert):
+        raise RuntimeError("SENTINEL_DELIVERY_SECRET")
+
+    monkeypatch.setattr(alert_service, "initialize_alert_indexes", noop_indexes)
+    monkeypatch.setattr(
+        alert_service, "get_safety_alerts_collection", lambda: collection
+    )
+    monkeypatch.setattr(alert_service, "build_alert_document", build_alert)
+    monkeypatch.setattr(alert_service, "_create_proactive_for_alert", noop_proactive)
+    monkeypatch.setattr(alert_service, "deliver_patient_alert", fail_delivery)
+
+    event = MemoryEvent(
+        event_id="event-failure",
+        timestamp=now_local(),
+        room_number=1,
+        room_name="Living Room",
+        semantic_text="A hazard was observed.",
+    )
+    result = asyncio.run(
+        alert_service.create_alert_for_safety_assessment(
+            event,
+            SafetyAssessment(
+                warning_needed=True,
+                severity="high",
+                hazard_type="hazard",
+                confidence=0.9,
+                patient_message="Please check the room.",
+            ),
+        )
+    )
+
+    assert result["delivery_details"] == {
+        "status": "failed",
+        "error": "delivery failed",
+    }
+    persisted = collection.updates[-1][1]["$set"]["delivery_details"]
+    assert persisted == result["delivery_details"]
+    assert "SENTINEL_DELIVERY_SECRET" not in str(result)
+
+
+def test_per_device_delivery_failure_uses_fixed_error(monkeypatch):
+    class DeviceCollection:
+        def find(self, query):
+            return FakeCursor(
+                [
+                    {
+                        "device_id": "patient-phone",
+                        "push_token": "token",
+                    }
+                ]
+            )
+
+    async def noop_indexes():
+        return None
+
+    async def fail_send(token, alert):
+        raise RuntimeError("SENTINEL_FCM_SECRET")
+
+    monkeypatch.setattr(alert_service, "initialize_alert_indexes", noop_indexes)
+    monkeypatch.setattr(
+        alert_service, "get_devices_collection", lambda: DeviceCollection()
+    )
+    monkeypatch.setattr(alert_service, "_send_fcm_message", fail_send)
+
+    result = asyncio.run(alert_service.deliver_patient_alert({"alert_id": "alert-1"}))
+    assert result == {
+        "status": "failed",
+        "results": [
+            {
+                "device_id": "patient-phone",
+                "status": "failed",
+                "error": "delivery failed",
+            }
+        ],
+    }
+    assert "SENTINEL_FCM_SECRET" not in str(result)
+
+
 def test_caretaker_email_runs_off_event_loop_thread(monkeypatch):
     from Blue_dream_agents.Tools import dementia_email
 

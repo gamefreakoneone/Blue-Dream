@@ -57,12 +57,12 @@ def upload_video(video_path: str | Path) -> str:
     return key
 
 
-def presigned_url(object_key: str) -> str:
+def presigned_url(object_key: str, ttl: int | None = None) -> str:
     key = object_key_for_video(object_key)
     settings = get_provider_settings()
-    ttl = settings.oss_presign_ttl_seconds
-    if not 1 <= ttl <= 86400:
+    effective_ttl = settings.oss_presign_ttl_seconds if ttl is None else ttl
+    if not 1 <= effective_ttl <= 86400:
         raise RuntimeError(
-            "OSS_PRESIGN_TTL_SECONDS must be between 1 and 86400 seconds."
+            "OSS presign TTL must be between 1 and 86400 seconds."
         )
-    return _get_bucket(settings).sign_url("GET", key, ttl)
+    return _get_bucket(settings).sign_url("GET", key, effective_ttl)

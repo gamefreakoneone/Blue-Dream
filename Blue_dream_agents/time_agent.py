@@ -18,6 +18,12 @@ PATIENT_SAFE_ERROR_MESSAGE = (
     "Please try again in a moment."
 )
 
+
+def _with_working_memory(system_prompt: str, working_memory_block: str) -> str:
+    if not working_memory_block:
+        return system_prompt
+    return f"{system_prompt}\n\n{working_memory_block}"
+
 try:
     from .db_client import get_mongo_client, close_mongo_client
     from .llm.model_registry import get_model_registry
@@ -286,7 +292,9 @@ async def _get_events(
 
 
 async def _summarize_with_llm(
-    events: List[MemoryEvent], user_query_context: str
+    events: List[MemoryEvent],
+    user_query_context: str,
+    working_memory_block: str = "",
 ) -> str:
     if not events:
         return "I couldn't find any recorded activities for that time."
@@ -315,10 +323,13 @@ async def _summarize_with_llm(
     )
     return await invoke_text(
         prompt=prompt,
-        system_prompt=with_patient_answer_context(
-            "You are a compassionate memory assistant helping a dementia patient "
-            "recall recent activity. Convert third-person monitoring descriptions "
-            "into direct second-person phrasing."
+        system_prompt=_with_working_memory(
+            with_patient_answer_context(
+                "You are a compassionate memory assistant helping a dementia patient "
+                "recall recent activity. Convert third-person monitoring descriptions "
+                "into direct second-person phrasing."
+            ),
+            working_memory_block,
         ),
         model_id=registry.synthesis,
         max_tokens=500,
@@ -332,6 +343,7 @@ async def get_time_window_context(
     room_name: Optional[str] = None,
     window_minutes: int = 20,
     limit: int = 40,
+    working_memory_block: str = "",
 ) -> TimeWindowContext:
     try:
         anchor_dt = normalize_timestamp(anchor_timestamp)
@@ -367,6 +379,7 @@ async def get_time_window_context(
                 "Use the nearby events to verify and ground the memory around the "
                 f"anchor time range {time_range}."
             ),
+            working_memory_block,
         )
         serialized_events = [
             {
@@ -400,7 +413,9 @@ async def get_time_window_context(
         )
 
 
-async def get_activity_history(time_range: str) -> TimelineResult:
+async def get_activity_history(
+    time_range: str, *, working_memory_block: str = ""
+) -> TimelineResult:
     try:
         start_dt, end_dt, time_desc = _build_time_filter(time_range)
         events = await _get_events(start_dt, end_dt)
@@ -413,7 +428,11 @@ async def get_activity_history(time_range: str) -> TimelineResult:
                 "This might mean the cameras weren't active or you were away.",
             )
 
-        summary = await _summarize_with_llm(events, f"What was I doing {time_desc}?")
+        summary = await _summarize_with_llm(
+            events,
+            f"What was I doing {time_desc}?",
+            working_memory_block,
+        )
         return TimelineResult(
             success=True,
             event_count=len(events),
@@ -431,7 +450,10 @@ async def get_activity_history(time_range: str) -> TimelineResult:
 
 
 async def get_room_activity(
-    room_name: str, time_range: str = "today"
+    room_name: str,
+    time_range: str = "today",
+    *,
+    working_memory_block: str = "",
 ) -> TimelineResult:
     try:
         room_id = _parse_room_name(room_name)
@@ -459,7 +481,9 @@ async def get_room_activity(
             )
 
         summary = await _summarize_with_llm(
-            events, f"What was I doing in the {clean_room_name} during {time_desc}?"
+            events,
+            f"What was I doing in the {clean_room_name} during {time_desc}?",
+            working_memory_block,
         )
         return TimelineResult(
             success=True,
@@ -478,7 +502,10 @@ async def get_room_activity(
 
 
 async def get_recent_transcripts(
-    time_range: str = "recently", room_name: Optional[str] = None
+    time_range: str = "recently",
+    room_name: Optional[str] = None,
+    *,
+    working_memory_block: str = "",
 ) -> TranscriptResult:
     try:
         start_dt, end_dt, time_desc = _build_time_filter(time_range)
@@ -534,10 +561,13 @@ async def get_recent_transcripts(
         )
         summary = await invoke_text(
             prompt=prompt,
-            system_prompt=with_patient_answer_context(
-                "You help a dementia patient remember what they were talking about. "
-                "Be warm, concise, and grounded in the transcript. Prefer the actual "
-                "audio transcript over video descriptions for speech questions."
+            system_prompt=_with_working_memory(
+                with_patient_answer_context(
+                    "You help a dementia patient remember what they were talking about. "
+                    "Be warm, concise, and grounded in the transcript. Prefer the actual "
+                    "audio transcript over video descriptions for speech questions."
+                ),
+                working_memory_block,
             ),
             model_id=registry.synthesis,
             max_tokens=500,
@@ -560,7 +590,12 @@ async def get_recent_transcripts(
         )
 
 
-async def check_activity(activity: str, hours: int = 24) -> ActivityCheckResult:
+async def check_activity(
+    activity: str,
+    hours: int = 24,
+    *,
+    working_memory_block: str = "",
+) -> ActivityCheckResult:
     try:
         start_dt, end_dt, time_desc = _build_time_filter(f"last {hours} hours")
         events = await _get_events(start_dt, end_dt)
@@ -611,11 +646,14 @@ async def check_activity(activity: str, hours: int = 24) -> ActivityCheckResult:
         evidence = await invoke_structured(
             prompt=prompt,
             output_model=ActivityEvidence,
-            system_prompt=with_patient_cctv_context(
-                "You check whether a dementia patient likely performed a target "
-                "activity. Consider synonyms and related phrasing. Return grounded "
-                "evidence only. Phrase evidence for patient-facing reuse with 'you' "
-                "when referring to the monitored patient."
+            system_prompt=_with_working_memory(
+                with_patient_cctv_context(
+                    "You check whether a dementia patient likely performed a target "
+                    "activity. Consider synonyms and related phrasing. Return grounded "
+                    "evidence only. Phrase evidence for patient-facing reuse with 'you' "
+                    "when referring to the monitored patient."
+                ),
+                working_memory_block,
             ),
             model_id=registry.synthesis,
             structured_output_prompt=(
@@ -686,13 +724,16 @@ async def _plan_time_query(query: str) -> TimeQueryPlan:
     )
 
 
-async def run_time_query(query: str) -> TimeResult:
+async def run_time_query(
+    query: str, *, working_memory_block: str = ""
+) -> TimeResult:
     try:
         plan = await _plan_time_query(query)
         if plan.intent == "transcripts":
             result = await get_recent_transcripts(
                 time_range=plan.time_range,
                 room_name=plan.room_name,
+                working_memory_block=working_memory_block,
             )
             return TimeResult(
                 response_type="transcripts",
@@ -702,7 +743,11 @@ async def run_time_query(query: str) -> TimeResult:
 
         if plan.intent == "activity_check":
             activity = plan.activity or query
-            result = await check_activity(activity=activity, hours=plan.hours)
+            result = await check_activity(
+                activity=activity,
+                hours=plan.hours,
+                working_memory_block=working_memory_block,
+            )
             return TimeResult(
                 response_type="activity_check",
                 text=result.summary,
@@ -714,9 +759,13 @@ async def run_time_query(query: str) -> TimeResult:
                 result = await get_room_activity(
                     room_name=plan.room_name,
                     time_range=plan.time_range,
+                    working_memory_block=working_memory_block,
                 )
             else:
-                result = await get_activity_history(time_range=plan.time_range)
+                result = await get_activity_history(
+                    time_range=plan.time_range,
+                    working_memory_block=working_memory_block,
+                )
 
             return TimeResult(
                 response_type="timeline",
@@ -727,9 +776,12 @@ async def run_time_query(query: str) -> TimeResult:
         registry = get_model_registry()
         text = await invoke_text(
             prompt=query,
-            system_prompt=with_patient_answer_context(
-                "You are a kind memory assistant for a dementia patient. "
-                "Answer briefly and do not promise unsupported features."
+            system_prompt=_with_working_memory(
+                with_patient_answer_context(
+                    "You are a kind memory assistant for a dementia patient. "
+                    "Answer briefly and do not promise unsupported features."
+                ),
+                working_memory_block,
             ),
             model_id=registry.synthesis,
             max_tokens=300,

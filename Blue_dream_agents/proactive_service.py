@@ -21,7 +21,7 @@ from .db_client import (
 from .llm.client import invoke_structured
 from .llm.prompt_context import with_patient_answer_context
 from .llm.settings import get_provider_settings
-from .media_paths import to_url_path
+from .media_paths import to_stored_path
 from .profile_memory import get_active_facts
 from .reminder_service import (
     get_due_reminders,
@@ -120,7 +120,7 @@ async def create_message(
         "message_id": message_id,
         "trigger_type": trigger_type,
         "text": cleaned_text,
-        "image_path": to_url_path(image_path) if image_path else None,
+        "image_path": to_stored_path(image_path) if image_path else None,
         "action": dict(action) if action else None,
         "status": "pending",
         "created_at": created_at,
@@ -194,7 +194,7 @@ async def check_due_reminders(now: dt.datetime) -> None:
                 text=str(reminder.get("text") or "Reminder"),
                 related_id=related_id,
             )
-            await mark_done(reminder_id, now=now)
+            await mark_done(reminder_id, mode="delivery", now=now)
         except Exception:
             logger.exception("Due reminder trigger failed for %s", reminder_id)
 
@@ -346,6 +346,6 @@ async def maybe_event_reminders(event: Any) -> None:
             )
             trigger = reminder.get("event_trigger") or {}
             if trigger.get("valid_date") is not None:
-                await mark_done(reminder_id, now=local_timestamp)
+                await mark_done(reminder_id, mode="delivery", now=local_timestamp)
         except Exception:
             logger.exception("Event reminder trigger failed for %s", reminder_id)

@@ -177,7 +177,7 @@ def test_mocked_object_query_response_uses_url_paths(
     async def route_query(query):
         return QueryRoute(intent="object", reason="media-path contract test")
 
-    async def object_query(query):
+    async def object_query(query, *, working_memory_block=""):
         return SearchResult(
             found=True,
             description="Your keys are on the table.",

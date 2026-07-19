@@ -40,7 +40,7 @@ try:
     from .jeeves import run_single_query
     from .llm.client import close_llm_clients
     from .llm.settings import get_provider_settings
-    from .media_paths import to_fs_path
+    from .media_paths import normalize_stored_path, to_fs_path, to_url_path
     from .memory_lifecycle import pin_event, run_consolidation, unpin_event
     from .profile_memory import (
         archive_fact,
@@ -88,7 +88,7 @@ except ImportError:
     from jeeves import run_single_query
     from llm.client import close_llm_clients
     from llm.settings import get_provider_settings
-    from media_paths import to_fs_path
+    from media_paths import normalize_stored_path, to_fs_path, to_url_path
     from memory_lifecycle import pin_event, run_consolidation, unpin_event
     from profile_memory import (
         archive_fact,
@@ -352,7 +352,7 @@ async def post_reminder(request: ReminderCreate):
 @app.post("/reminders/{reminder_id}/done")
 async def complete_reminder(reminder_id: str):
     try:
-        if not await mark_done(reminder_id):
+        if not await mark_done(reminder_id, mode="patient"):
             raise HTTPException(status_code=404, detail="Reminder not found")
         return {"ok": True}
     except HTTPException:
@@ -393,12 +393,16 @@ async def get_proactive_messages(session_id: Optional[str] = None):
             "action",
             "created_at",
         )
-        return {
-            "messages": [
-                {field: message.get(field) for field in public_fields}
-                for message in messages
-            ]
-        }
+        public_messages = []
+        for message in messages:
+            public_message = {
+                field: message.get(field) for field in public_fields
+            }
+            public_message["image_path"] = to_url_path(
+                normalize_stored_path(message.get("image_path"))
+            )
+            public_messages.append(public_message)
+        return {"messages": public_messages}
     except Exception:
         logger.exception("Proactive pending-message poll failed")
         raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)

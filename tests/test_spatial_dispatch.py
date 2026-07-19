@@ -66,3 +66,17 @@ def test_qwen_spatial_failure_falls_back_to_gemini(monkeypatch):
     monkeypatch.setattr(spatial, "highlight_object_with_gemini", gemini)
     result = asyncio.run(spatial.highlight_object("image.jpg", "story book"))
     assert result == "Storage/highlighted/gemini.png"
+
+
+def test_gemini_spatial_reuses_fenced_and_embedded_json_hardening():
+    from Blue_dream_agents.gemini_spatial import parse_gemini_spatial_response
+
+    responses = (
+        '```json\n[{"box_2d":[10,20,300,400],"label":"book"}]\n```',
+        'Result: {"boxes":[{"box_2d":[10,20,300,400],"label":"book"}]} done.',
+    )
+    for raw_text in responses:
+        result = parse_gemini_spatial_response(raw_text)
+        assert result.found is True
+        assert result.bounding_box.box_2d == [10, 20, 300, 400]
+        assert result.bounding_box.label == "book"

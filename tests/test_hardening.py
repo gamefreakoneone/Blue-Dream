@@ -1,8 +1,28 @@
 import asyncio
 import importlib
+from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
+
+
+def test_root_pytest_collection_is_limited_to_tests_directory():
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Blue_dream_agents/test_image_object_pipeline.py" not in result.stdout
+    node_ids = [line for line in result.stdout.splitlines() if "::" in line]
+    assert node_ids
+    assert all(line.startswith(("tests/", "tests\\")) for line in node_ids)
 
 
 def test_pytest_basetemp_falls_back_when_candidate_is_not_writable(monkeypatch):
@@ -145,7 +165,6 @@ class FakeCollection:
 
 def test_consolidator_timeout_persists_partial_audio(monkeypatch):
     from Blue_dream_agents import consolidator
-    from Blue_dream_agents.safety_agent import empty_safety_assessment
 
     collection = FakeCollection()
 
@@ -172,7 +191,7 @@ def test_consolidator_timeout_persists_partial_audio(monkeypatch):
         indexed.append(event.event_id)
 
     async def assess(*args, **kwargs):
-        return empty_safety_assessment("test")
+        raise RuntimeError("SENTINEL_SAFETY_SECRET")
 
     monkeypatch.setattr(consolidator, "ensure_events_indexes", noop)
     monkeypatch.setattr(consolidator, "get_events_collection", lambda: collection)
@@ -199,10 +218,14 @@ def test_consolidator_timeout_persists_partial_audio(monkeypatch):
     assert document["video_description"] == "Video analysis unavailable for this recording."
     assert document["video_oss_key"] == "Storage/video_recordings/camera_1/video.mp4"
     assert document["audio_transcript"] == "The patient asked where the keys were."
+    assert document["safety_assessment"]["reason"] == (
+        "Safety assessment unavailable for this recording."
+    )
+    assert "SENTINEL_SAFETY_SECRET" not in str(document["safety_assessment"])
     assert indexed == [document["event_id"]]
 
 
-def test_consolidator_duplicate_does_not_reprocess_or_insert(monkeypatch):
+def test_consolidated_duplicate_does_not_reprocess_insert_or_reindex(monkeypatch):
     from Blue_dream_agents import consolidator
     from Blue_dream_agents.timezone_utils import now_local
 
@@ -214,6 +237,7 @@ def test_consolidator_duplicate_does_not_reprocess_or_insert(monkeypatch):
         "room_name": "Bedroom",
         "video_description": "Existing event",
         "video_path": "video.mp4",
+        "lifecycle_status": "consolidated",
     }
     collection = FakeCollection(existing=existing)
 
@@ -224,12 +248,17 @@ def test_consolidator_duplicate_does_not_reprocess_or_insert(monkeypatch):
     async def noop(*args, **kwargs):
         return None
 
+    indexed = []
+
+    async def record_index(event):
+        indexed.append(event.event_id)
+
     monkeypatch.setattr(consolidator, "ensure_events_indexes", noop)
     monkeypatch.setattr(consolidator, "get_events_collection", lambda: collection)
     monkeypatch.setattr(consolidator, "Audio_agent", MustNotConstruct)
     monkeypatch.setattr(consolidator, "maybe_morning_report", noop)
     monkeypatch.setattr(consolidator, "maybe_event_reminders", noop)
-    monkeypatch.setattr(consolidator, "index_memory_event", noop)
+    monkeypatch.setattr(consolidator, "index_memory_event", record_index)
 
     result = asyncio.run(
         consolidator.consolidator_agent(
@@ -242,3 +271,4 @@ def test_consolidator_duplicate_does_not_reprocess_or_insert(monkeypatch):
 
     assert result == "existing-id"
     assert collection.inserted == []
+    assert indexed == []

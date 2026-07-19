@@ -60,7 +60,7 @@ def _prompt_to_text(prompt: Any) -> str:
     return json.dumps(prompt, default=str, indent=2)
 
 
-def _strip_json_fences(raw_text: str) -> str:
+def strip_json_fences(raw_text: str) -> str:
     text = raw_text.strip()
     if not text.startswith("```"):
         return text
@@ -73,8 +73,10 @@ def _strip_json_fences(raw_text: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _extract_json_payload(raw_text: str) -> Any:
-    cleaned = _strip_json_fences(raw_text)
+def extract_json_payload(raw_text: str) -> Any:
+    """Extract the first valid JSON value from provider text."""
+
+    cleaned = strip_json_fences(raw_text)
     if not cleaned:
         raise ValueError("Provider response did not contain text content.")
 
@@ -251,7 +253,7 @@ async def _invoke_structured_messages(
         raw_text = _completion_text(completion)
         last_raw_text = raw_text
         try:
-            return output_model.model_validate(_extract_json_payload(raw_text))
+            return output_model.model_validate(extract_json_payload(raw_text))
         except (ValidationError, ValueError, TypeError) as exc:
             last_error = exc
             logger.warning("Structured provider response failed validation: %s", exc)

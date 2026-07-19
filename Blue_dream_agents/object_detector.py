@@ -55,6 +55,12 @@ HISTORY_EVENT_LIMIT = 80
 HISTORY_PROMPT_BUDGET_CHARS = 18000
 
 
+def _with_working_memory(system_prompt: str, working_memory_block: str) -> str:
+    if not working_memory_block:
+        return system_prompt
+    return f"{system_prompt}\n\n{working_memory_block}"
+
+
 class SearchResult(BaseModel):
     found: bool = Field(description="Whether the object was found")
     room_number: Optional[int] = Field(default=None)
@@ -162,7 +168,9 @@ async def _parse_query_intent(user_query: str) -> ObjectQueryIntent:
 
 
 async def _check_image_worker(
-    object_name: str, room: MemoryEvent
+    object_name: str,
+    room: MemoryEvent,
+    working_memory_block: str = "",
 ) -> Optional[Dict[str, Any]]:
     screenshot_path = to_fs_path(normalize_stored_path(room.screenshot_path))
     if screenshot_path is None or not screenshot_path.exists():
@@ -187,11 +195,14 @@ async def _check_image_worker(
             ),
             image_path=str(screenshot_path),
             output_model=ObjectVisionCheck,
-            system_prompt=with_patient_cctv_context(
-                "You inspect room images for a lost-object assistant helping a "
-                "dementia patient. Only mark found true when the object is visibly "
-                "present in the current image. Write descriptions in second person "
-                "addressed to the patient (use 'your' not 'the')."
+            system_prompt=_with_working_memory(
+                with_patient_cctv_context(
+                    "You inspect room images for a lost-object assistant helping a "
+                    "dementia patient. Only mark found true when the object is visibly "
+                    "present in the current image. Write descriptions in second person "
+                    "addressed to the patient (use 'your' not 'the')."
+                ),
+                working_memory_block,
             ),
             model_id=registry.vision,
             fallback_model_id=registry.vision_fallback,
@@ -218,10 +229,15 @@ async def _check_image_worker(
 
 
 async def _parallel_vision_search(
-    object_name: str, room_states: List[MemoryEvent]
+    object_name: str,
+    room_states: List[MemoryEvent],
+    working_memory_block: str = "",
 ) -> List[Dict[str, Any]]:
     results = await asyncio.gather(
-        *[_check_image_worker(object_name, room) for room in room_states]
+        *[
+            _check_image_worker(object_name, room, working_memory_block)
+            for room in room_states
+        ]
     )
     matches = [result for result in results if result]
     matches.sort(
@@ -298,6 +314,7 @@ def _existing_path_or_none(path: Optional[str]) -> Optional[str]:
 async def _analyze_last_known_location(
     search_term: str,
     history_events: List[MemoryEvent],
+    working_memory_block: str = "",
 ) -> Optional[ObjectLastKnownResult]:
     if not history_events:
         return None
@@ -311,19 +328,22 @@ async def _analyze_last_known_location(
             f"{json.dumps(_serialize_history_events(history_events), indent=2)}"
         ),
         output_model=ObjectLastKnownResult,
-        system_prompt=with_patient_cctv_context(
-            "You infer the last known location of a missing household item from "
-            "home-monitoring events for a dementia patient. Write all summaries in "
-            "second person addressed directly to the patient (use 'you' and 'your', "
-            "not 'the person', 'the individual', or 'they'). "
-            "Prefer direct mentions in video_description. "
-            "Use room_objects only as supporting evidence, never as sole proof. "
-            "Use audio_transcript only when it directly supports the object's "
-            "location or handling. Never invent a current location. If you were "
-            "carrying the object and then moved out of frame, mark "
-            "status='carried_out_of_frame' and say it was last seen being carried "
-            "by you in that room. Mark found=false when there is no reliable "
-            "grounded clue."
+        system_prompt=_with_working_memory(
+            with_patient_cctv_context(
+                "You infer the last known location of a missing household item from "
+                "home-monitoring events for a dementia patient. Write all summaries in "
+                "second person addressed directly to the patient (use 'you' and 'your', "
+                "not 'the person', 'the individual', or 'they'). "
+                "Prefer direct mentions in video_description. "
+                "Use room_objects only as supporting evidence, never as sole proof. "
+                "Use audio_transcript only when it directly supports the object's "
+                "location or handling. Never invent a current location. If you were "
+                "carrying the object and then moved out of frame, mark "
+                "status='carried_out_of_frame' and say it was last seen being carried "
+                "by you in that room. Mark found=false when there is no reliable "
+                "grounded clue."
+            ),
+            working_memory_block,
         ),
         model_id=registry.synthesis,
         structured_output_prompt=(
@@ -393,7 +413,9 @@ async def _highlight_object(
         return None
 
 
-async def search_for_object(user_query: str) -> SearchResult:
+async def search_for_object(
+    user_query: str, *, working_memory_block: str = ""
+) -> SearchResult:
     try:
         # Run room state fetch and query intent parsing in parallel (independent)
         room_states, parsed = await asyncio.gather(
@@ -425,7 +447,7 @@ async def search_for_object(user_query: str) -> SearchResult:
                 )
 
         current_visual_matches = await _parallel_vision_search(
-            target_object, rooms_to_search
+            target_object, rooms_to_search, working_memory_block
         )
         if current_visual_matches:
             best_match = current_visual_matches[0]
@@ -474,6 +496,7 @@ async def search_for_object(user_query: str) -> SearchResult:
         historical_match = await _analyze_last_known_location(
             target_object,
             history_events,
+            working_memory_block,
         )
         if historical_match:
             return SearchResult(
@@ -519,8 +542,12 @@ async def search_for_object(user_query: str) -> SearchResult:
         )
 
 
-async def run_object_query(query: str) -> SearchResult:
-    return await search_for_object(query)
+async def run_object_query(
+    query: str, *, working_memory_block: str = ""
+) -> SearchResult:
+    return await search_for_object(
+        query, working_memory_block=working_memory_block
+    )
 
 
 if __name__ == "__main__":

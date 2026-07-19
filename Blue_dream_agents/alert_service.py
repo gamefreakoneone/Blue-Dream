@@ -356,9 +356,9 @@ async def create_alert_for_safety_assessment(
         )
     try:
         delivery_status = await deliver_patient_alert(alert)
-    except Exception as exc:
-        logger.warning("Patient alert delivery failed for %s: %s", alert["alert_id"], exc)
-        delivery_status = {"status": "failed", "error": str(exc)}
+    except Exception:
+        logger.exception("Patient alert delivery failed for %s", alert["alert_id"])
+        delivery_status = {"status": "failed", "error": "delivery failed"}
 
     await get_safety_alerts_collection().update_one(
         {"alert_id": alert["alert_id"]},
@@ -677,12 +677,16 @@ async def deliver_patient_alert(alert: dict[str, Any]) -> dict[str, Any]:
             if result.get("status") == "sent":
                 sent_count += 1
             results.append({"device_id": device.get("device_id"), **result})
-        except Exception as exc:
+        except Exception:
+            logger.exception(
+                "Patient alert delivery failed for device %s",
+                device.get("device_id"),
+            )
             results.append(
                 {
                     "device_id": device.get("device_id"),
                     "status": "failed",
-                    "error": str(exc),
+                    "error": "delivery failed",
                 }
             )
 

@@ -591,6 +591,12 @@ async def run_semantic_retrieval(query: str) -> SemanticSearchResult:
 
 
 async def run_semantic_query(query: str) -> SemanticSearchResult:
+    """Smoke-test-only retrieval plus synthesis path.
+
+    Production ``/query`` uses ``run_semantic_retrieval`` and Jeeves' working-
+    memory-aware synthesis instead.
+    """
+
     return await _run_semantic(query, synthesize=True)
 
 

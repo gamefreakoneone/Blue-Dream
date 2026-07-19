@@ -21,6 +21,7 @@ try:
     from .media_paths import to_url_path
     from .object_detector import run_object_query
     from .profile_memory import render_profile_block, render_unpinned_profile_block
+    from .reminder_service import render_today_reminder_block
     from .semantic_search import SemanticSearchResult, run_semantic_retrieval
     from .time_agent import TimeWindowContext, get_time_window_context, run_time_query
 except ImportError:
@@ -34,6 +35,7 @@ except ImportError:
     from media_paths import to_url_path
     from object_detector import run_object_query
     from profile_memory import render_profile_block, render_unpinned_profile_block
+    from reminder_service import render_today_reminder_block
     from semantic_search import SemanticSearchResult, run_semantic_retrieval
     from time_agent import TimeWindowContext, get_time_window_context, run_time_query
 
@@ -67,6 +69,20 @@ class ResolvedQuery(BaseModel):
     )
     used_context: bool = False
     reason: str = ""
+
+
+async def _render_working_memory(profile_renderer) -> str:
+    """Combine bounded durable context without letting optional reads break chat."""
+
+    try:
+        profile_block = await profile_renderer()
+    except Exception:
+        logger.exception("Profile working-memory read failed")
+        profile_block = ""
+    reminder_block = await render_today_reminder_block()
+    return "\n\n".join(
+        block for block in (profile_block, reminder_block) if block
+    )
 
 
 class SemanticDecision(BaseModel):
@@ -314,6 +330,7 @@ async def _synthesize_semantic_answer(
     semantic_result: SemanticSearchResult,
     *,
     time_window: Optional[TimeWindowContext] = None,
+    working_memory_block: Optional[str] = None,
 ) -> str:
     registry = get_model_registry()
     prompt_payload: dict[str, Any] = {
@@ -339,7 +356,10 @@ async def _synthesize_semantic_answer(
             ],
         }
 
-    profile_block = await render_unpinned_profile_block()
+    if working_memory_block is None:
+        working_memory_block = await _render_working_memory(
+            render_unpinned_profile_block
+        )
     system_prompt = with_patient_answer_context(
         "You are Jeeves, a grounded memory assistant for a dementia-support "
         "system. Synthesize a concise answer using only the supplied evidence "
@@ -349,8 +369,8 @@ async def _synthesize_semantic_answer(
         "present in the evidence. Answer the question directly; do not describe "
         "why one event was selected."
     )
-    if profile_block:
-        system_prompt = f"{system_prompt}\n\n{profile_block}"
+    if working_memory_block:
+        system_prompt = f"{system_prompt}\n\n{working_memory_block}"
 
     return await invoke_text(
         prompt=with_monitoring_evidence_context(
@@ -390,16 +410,23 @@ async def _handle_semantic_query(query: str) -> JeevesResponse:
     }
 
     if decision.decision == "use_direct_time_reasoning":
-        time_result = await run_time_query(query)
+        working_memory_block = await _render_working_memory(render_profile_block)
+        time_result = await run_time_query(
+            query, working_memory_block=working_memory_block
+        )
         response_data["fallback_used"] = True
         response_data["time"] = time_result.model_dump(mode="json")
         return _build_activity_response(time_result.text, response_data)
 
     if decision.decision == "insufficient_evidence":
-        profile_block = await render_profile_block()
-        if profile_block:
+        working_memory_block = await _render_working_memory(render_profile_block)
+        if working_memory_block:
             response_data["profile_fallback_used"] = True
-            text = await _synthesize_semantic_answer(query, semantic_result)
+            text = await _synthesize_semantic_answer(
+                query,
+                semantic_result,
+                working_memory_block=working_memory_block,
+            )
             return _build_activity_response(text, response_data)
         if semantic_result.success and semantic_result.text:
             text = semantic_result.text
@@ -456,7 +483,7 @@ async def _handle_general_query(
             f"{conversation_context}\n\n"
             f"Current user message: {query}"
         )
-    profile_block = await render_profile_block()
+    working_memory_block = await _render_working_memory(render_profile_block)
     system_prompt = with_patient_answer_context(
         "You are a kind, concise assistant for a dementia-support system. "
         "Answer naturally and do not promise unsupported features. You may "
@@ -464,8 +491,8 @@ async def _handle_general_query(
         "understand follow-up messages, but do not treat conversation context "
         "as stored monitoring evidence."
     )
-    if profile_block:
-        system_prompt = f"{system_prompt}\n\n{profile_block}"
+    if working_memory_block:
+        system_prompt = f"{system_prompt}\n\n{working_memory_block}"
 
     text = await invoke_text(
         prompt=prompt,
@@ -507,7 +534,10 @@ async def run_single_query(
 
         if route.intent == "object":
             logger.info("[TOOL CALL] Object search for: '%s'", resolved_query)
-            result = await run_object_query(resolved_query)
+            working_memory_block = await _render_working_memory(render_profile_block)
+            result = await run_object_query(
+                resolved_query, working_memory_block=working_memory_block
+            )
             logger.info(
                 "[TOOL RESULT] Object search: found=%s, evidence_type=%s, "
                 "highlight_status=%s, image_path=%s",
@@ -534,7 +564,10 @@ async def run_single_query(
 
         if route.intent == "time":
             logger.info("[TOOL CALL] Time-based query: '%s'", resolved_query)
-            result = await run_time_query(resolved_query)
+            working_memory_block = await _render_working_memory(render_profile_block)
+            result = await run_time_query(
+                resolved_query, working_memory_block=working_memory_block
+            )
             logger.info(
                 "[TOOL RESULT] Time query: response_type=%s, text_length=%d",
                 result.response_type,

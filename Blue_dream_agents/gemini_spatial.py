@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from functools import lru_cache
@@ -14,9 +13,11 @@ from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
 
 try:
+    from .llm.client import extract_json_payload
     from .llm.settings import load_project_env, resolve_gemini_spatial_model
     from .timezone_utils import now_local
 except ImportError:
+    from llm.client import extract_json_payload
     from llm.settings import load_project_env, resolve_gemini_spatial_model
     from timezone_utils import now_local
 
@@ -43,30 +44,11 @@ class GeminiSpatialResult(BaseModel):
     error: Optional[str] = None
 
 
-def strip_json_fences(raw_text: str) -> str:
-    text = raw_text.strip()
-    if not text.startswith("```"):
-        return text
-
-    lines = text.splitlines()
-    if lines:
-        lines = lines[1:]
-    if lines and lines[-1].strip() == "```":
-        lines = lines[:-1]
-    return "\n".join(lines).strip()
-
-
 def _parse_json_payload(raw_text: str) -> list[Any]:
-    cleaned = strip_json_fences(raw_text)
-    if not cleaned:
-        return []
-
     try:
-        payload = json.loads(cleaned)
-    except json.JSONDecodeError:
-        logger.warning(
-            "Gemini spatial response was not valid JSON: %s", cleaned[:200]
-        )
+        payload = extract_json_payload(raw_text)
+    except ValueError:
+        logger.warning("Gemini spatial response did not contain valid JSON")
         return []
 
     if isinstance(payload, dict):

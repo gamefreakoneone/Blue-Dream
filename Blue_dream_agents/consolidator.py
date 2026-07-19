@@ -163,14 +163,15 @@ async def consolidator_agent(
     existing_doc = await collection.find_one({"video_path": {"$in": _path_variants(video_path)}})
     if existing_doc:
         existing_event = memory_event_from_mongo(existing_doc)
-        try:
-            await index_memory_event(existing_event)
-        except Exception as exc:
-            logger.warning(
-                "Duplicate event %s found but semantic re-index failed: %s",
-                existing_event.event_id,
-                exc,
-            )
+        if existing_event.lifecycle_status != "consolidated":
+            try:
+                await index_memory_event(existing_event)
+            except Exception as exc:
+                logger.warning(
+                    "Duplicate event %s found but semantic re-index failed: %s",
+                    existing_event.event_id,
+                    exc,
+                )
         return existing_doc.get("_id") or existing_event.event_id
 
     # Run video description and audio transcription in parallel (independent tasks)
@@ -224,14 +225,13 @@ async def consolidator_agent(
 
     try:
         safety_assessment = await assess_event_safety(event)
-    except Exception as exc:
-        logger.warning(
-            "Safety assessment failed for event %s but ingestion will continue: %s",
+    except Exception:
+        logger.exception(
+            "Safety assessment failed for event %s but ingestion will continue",
             event.event_id,
-            exc,
         )
         safety_assessment = empty_safety_assessment(
-            f"Safety assessment failed: {exc}"
+            "Safety assessment unavailable for this recording."
         )
     await apply_event_lifecycle(event, safety_assessment)
 
