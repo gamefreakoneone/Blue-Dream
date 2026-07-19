@@ -2,7 +2,7 @@
 
 Use this as the quick project ledger before opening individual spec folders. Detailed requirements, designs, tasks, and evidence live under each `docs/specs/NNNN-feature-name/` folder.
 
-Two hard deadlines govern sequencing: **Qwen Cloud submission July 20, 2026, 2pm PT** (specs 0001–0011) and **OpenAI Build Week submission July 21, 2026, 5pm PT** (spec 0012).
+Two hard deadlines govern sequencing: **Qwen Cloud submission July 20, 2026, 2pm PT** (specs 0001–0008a, then **0013**, then 0011; 0009 voice is a stretch decided the morning of Jul 20) and **OpenAI Build Week submission July 21, 2026, 5pm PT** (spec 0012).
 
 | Spec | Feature | Status | Evidence | Notes |
 |---|---|---|---|---|
@@ -15,10 +15,11 @@ Two hard deadlines govern sequencing: **Qwen Cloud submission July 20, 2026, 2pm
 | 0007 | Memory Lifecycle | Completed | `docs/specs/0007-memory-lifecycle/status.md` | Implementation commit `d0c80c9` plus the completed course correction: 107 tests pass with zero failures/errors, the destructive rehearsal is guarded, non-subset consolidation is recoverable, and the isolated live Qwen rehearsal passes. Earlier non-reproducing pytest evidence is superseded in `status.md`; UI evidence remains independently verified. |
 | 0008 | Proactive Channel | Completed | `docs/specs/0008-proactive-channel/status.md` | Commit `4456ff9`; 118 tests pass, and the isolated live Qwen/API plus rendered browser rehearsals verify all four triggers, expiry, global delivery, rollover, dedupe/re-arm, conversation append, and acknowledgement. Geofence behavior remains unchanged. |
 | 0008a | Audit Cleanup | Completed | `docs/specs/0008a-audit-cleanup/status.md` | Implementation commit: this commit/`HEAD`; 129 tests pass with zero failures/errors. Isolated Qwen/API evidence verifies due-reminder answers and stored-to-URL proactive media conversion; capture startup remains functional. |
-| 0009 | Voice Agent | Not started | `docs/specs/0009-voice-agent/status.md` | Server-side ASR/TTS endpoints + mic UI; browser Web Speech fallback ladder. |
+| 0009 | Voice Agent | Not started (stretch) | `docs/specs/0009-voice-agent/status.md` | Demoted behind 0013 on Jul 19; go/no-go decided the morning of Jul 20. Server-side ASR/TTS endpoints + mic UI; browser Web Speech fallback ladder. |
 | 0010 | Alibaba Deployment (stretch) | Not started | `docs/specs/0010-alibaba-deployment/status.md` | Docker/compose, `/ingest/event`, beginner ECS walkthrough. Skippable: DashScope usage already satisfies proof. |
 | 0011 | Qwen Submission | Not started | `docs/specs/0011-qwen-submission/status.md` | README rewrite, architecture diagram, <3min video, checklist. Submit by ~noon PT Jul 20. |
-| 0012 | OpenAI Week | Not started | `docs/specs/0012-openai-week/status.md` | GPT-5.6 provider flip, caregiver dashboard, submission package. Submit by ~3pm PT Jul 21. |
+| 0012 | OpenAI Week | Not started | `docs/specs/0012-openai-week/status.md` | GPT-5.6 provider flip, caregiver dashboard, submission package. Submit by ~3pm PT Jul 21. `GET /memory/summaries` is delivered early by 0013. |
+| 0013 | Web UI Rehaul | Not started — **current target** | `docs/specs/0013-web-ui-rehaul/status.md` | Executes overnight Jul 19→20, **before 0009**. Vite + React installable PWA replaces `UI/` (built to `UI/dist`); Web Push via self-generated VAPID + pywebpush (no third-party service); reminder sweep loop; screens for chat/reminders/safety/memories; geofence UI moves to a demo-tools sheet; `Mobile/` deleted. Demo: Android phone via `adb reverse tcp:8000 tcp:8000`, laptop Chrome fallback. |
 
 ## Status Definitions
 
@@ -31,12 +32,13 @@ Two hard deadlines govern sequencing: **Qwen Cloud submission July 20, 2026, 2pm
 
 1. Video understanding degrades down its ladder: OSS-URL Qwen analysis → full-video Gemini fallback → partial event. Frame sampling is intentionally excluded for long recordings. Qwen-VL grounding (core in 0005) is the first cut lever — if the schedule slips it degrades to the Gemini fallback.
 2. Spec 0010 ECS deployment is skipped entirely (DashScope usage in code is sufficient proof).
-3. Voice degrades from DashScope ASR/TTS to the browser Web Speech API (fallback tasks in 0009).
+3. Voice (0009) is a stretch goal decided the morning of Jul 20; if attempted, it degrades from DashScope ASR/TTS to the browser Web Speech API (fallback tasks in 0009).
+3a. Spec 0013 carries its own internal cut lines (see `docs/specs/0013-web-ui-rehaul/tasks.md`): summaries UI → event-reminder form → notification fallback/chime → Memories tab. The push chain, ChatScreen, Reminders, Safety, and PWA install are never cut.
 4. Event-triggered reminders degrade to schema-only (0006 keeps the `trigger_type` field; the 0008 matcher is dropped); the demo uses time-based reminders.
 
 ## Post-Hackathon Backlog
 
-Full `src/` package restructure; facial recognition; mobile push delivery fix (provider mismatch, geofence screen, SDK-54 notification triggers); geofence proactive check-ins (exit detection → check-in message + route-home action); Telegram/SMS caregiver channel.
+Full `src/` package restructure; facial recognition; native mobile apps (the Expo prototype is deleted by spec 0013; web push replaces mobile push for the demo); geofence proactive check-ins (exit detection → check-in message + route-home action); Telegram/SMS caregiver channel.
 
 ## Update Rule
 
