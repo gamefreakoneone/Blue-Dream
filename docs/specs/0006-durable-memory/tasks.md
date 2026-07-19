@@ -31,4 +31,4 @@
 
 ## Wrap-Up
 
-- [ ] Update `docs/FEATURE_STATUS.md` + `status.md` with evidence; commit.
+- [x] Update `docs/FEATURE_STATUS.md` + `status.md` with evidence; commit.

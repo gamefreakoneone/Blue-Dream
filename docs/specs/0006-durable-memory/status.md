@@ -2,9 +2,9 @@
 
 ## Status
 
-Completed 2026-07-18. Durable conversations, profile facts, and time/event
-reminders are implemented and verified offline and against live Qwen. The
-implementation commit hash will be recorded by the follow-up evidence commit.
+Completed 2026-07-18 in implementation commit `42978c3`. Durable conversations,
+profile facts, and time/event reminders are implemented and verified offline and
+against live Qwen.
 
 ## Verification Evidence
 
@@ -39,4 +39,4 @@ implementation commit hash will be recorded by the follow-up evidence commit.
   durable profile facts when monitoring evidence is insufficient, without
   treating conversation history as monitoring evidence.
 - No spec 0007 implementation or status change was made.
-- Implementation commit: pending.
+- Implementation commit: `42978c3` (`Implement spec 0006 durable memory`).
