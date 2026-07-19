@@ -18,7 +18,7 @@
 
 ## Diagram
 
-Produce `Demo/memoria-architecture-qwen.png`. Boxes: Home (cameras → capture/YOLO → consolidator) | Memory (MongoDB truth store, Chroma per-provider index) | Alibaba Cloud (OSS bucket receiving event videos; Qwen Cloud: qwen-plus/max routing+synthesis+judging, qwen-vl vision/grounding + video via presigned OSS URL, text-embedding-v4, ASR/TTS) | Backend (FastAPI: query, proactive, voice, alerts, geofence) | Patient (web chat + voice + proactive bubbles). Draw the ECS boundary around Memory+Backend if deployed. Keep labels legible at README width.
+Produce `Demo/memoria-architecture-qwen.png`. Boxes: Home (cameras → capture/YOLO → consolidator) | Memory (MongoDB truth store, Chroma per-provider index) | Alibaba Cloud (OSS bucket receiving event videos; Qwen Cloud: qwen3.7-plus routing+synthesis+judging, qwen3-vl-plus/flash vision+grounding + video via presigned OSS URL, text-embedding-v4, ASR/TTS) | Backend (FastAPI: query, proactive, voice, alerts) | Patient (web chat + voice + proactive bubbles). Draw the ECS boundary around Memory+Backend if deployed. Keep labels legible at README width.
 
 ## Video production notes
 

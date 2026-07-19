@@ -59,6 +59,21 @@ def get_geofence_collection():
     return get_mongo_client().dementia_assistance.geofence_settings
 
 
+def get_conversation_sessions_collection():
+    """Return the durable patient conversation collection."""
+    return get_mongo_client().dementia_assistance.conversation_sessions
+
+
+def get_profile_facts_collection():
+    """Return the durable patient profile-fact collection."""
+    return get_mongo_client().dementia_assistance.profile_facts
+
+
+def get_reminders_collection():
+    """Return the durable reminder collection."""
+    return get_mongo_client().dementia_assistance.reminders
+
+
 async def ensure_events_indexes() -> None:
     """Create MongoDB indexes used by ingestion and retrieval paths."""
 
@@ -90,3 +105,34 @@ async def ensure_alert_indexes() -> None:
 
     geofence = get_geofence_collection()
     await geofence.create_index([("config_id", 1)], name="config_id_1", unique=True)
+
+
+async def ensure_conversation_indexes() -> None:
+    """Create indexes for Mongo-backed conversation sessions."""
+
+    await get_conversation_sessions_collection().create_index(
+        [("session_id", 1)], name="session_id_1", unique=True
+    )
+
+
+async def ensure_profile_indexes() -> None:
+    """Create indexes used to inject and deduplicate active profile facts."""
+
+    await get_profile_facts_collection().create_index(
+        [("status", 1), ("category", 1)],
+        name="status_1_category_1",
+    )
+
+
+async def ensure_reminder_indexes() -> None:
+    """Create indexes used by time and event reminder pre-filters."""
+
+    reminders = get_reminders_collection()
+    await reminders.create_index(
+        [("status", 1), ("due_at", 1)],
+        name="status_1_due_at_1",
+    )
+    await reminders.create_index(
+        [("status", 1), ("trigger_type", 1)],
+        name="status_1_trigger_type_1",
+    )

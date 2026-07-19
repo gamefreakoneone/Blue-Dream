@@ -37,7 +37,7 @@ Follow the existing alert serialization helpers; no ObjectId leakage.
 ## Dashboard (`UI/dashboard.html`, `UI/dashboard.js`, reuse `UI/styles.css` + a small `dashboard.css`)
 
 - Header: "Memoria — Caregiver view" + the privacy line ("Derived summaries, alerts, and facts only. No raw video or audio.") + link back to the patient chat.
-- Five sections per requirements; each section = fetch → render → action buttons wired to existing/new endpoints; `escapeHtml` everything (copy the helper from `script.js`).
+- Four sections per requirements; each section = fetch → render → action buttons wired to existing/new endpoints; `escapeHtml` everything (copy the helper from `script.js`).
 - Consolidation button shows the returned report inline (groups formed, events consolidated) — this doubles as a live demo of the memory-hygiene story.
 - Auto-refresh alerts/summaries every 30s; manual refresh buttons elsewhere. Desktop-optimized.
 
@@ -55,7 +55,7 @@ Follow the existing alert serialization helpers; no ObjectId leakage.
 
 1. 0:00–0:20 — recap the product in two sentences; "rebuilt this week with Codex on GPT-5.6".
 2. 0:20–1:10 — patient side on GPT-5.6: voice question → grounded answer; proactive hazard warning; morning report.
-3. 1:10–2:10 — caregiver dashboard walkthrough: facts (pin), daily summaries, live consolidation run, alerts with images, geofence update.
+3. 1:10–2:10 — caregiver dashboard walkthrough: facts (pin), daily summaries, live consolidation run, alerts with images, reminders.
 4. 2:10–2:50 — how it was built: Codex workflow, spec ledger on screen, GPT-5.6 structured outputs + embeddings; architecture flash.
 5. Close.
 

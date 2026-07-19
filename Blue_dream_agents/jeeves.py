@@ -21,6 +21,7 @@ try:
     from .media_paths import to_url_path
     from .object_detector import run_object_query
     from .prompt_budget import compact_json_records, truncate_text
+    from .profile_memory import render_profile_block
     from .semantic_search import SemanticSearchResult, run_semantic_retrieval
     from .time_agent import TimeWindowContext, get_time_window_context, run_time_query
 except ImportError:
@@ -34,6 +35,7 @@ except ImportError:
     from media_paths import to_url_path
     from object_detector import run_object_query
     from prompt_budget import compact_json_records, truncate_text
+    from profile_memory import render_profile_block
     from semantic_search import SemanticSearchResult, run_semantic_retrieval
     from time_agent import TimeWindowContext, get_time_window_context, run_time_query
 
@@ -341,18 +343,24 @@ async def _synthesize_semantic_answer(
             ],
         }
 
+    profile_block = await render_profile_block()
+    system_prompt = with_patient_answer_context(
+        "You are Jeeves, a grounded memory assistant for a dementia-support "
+        "system. Synthesize a concise answer using only the supplied evidence "
+        "and durable profile facts. Prefer transcript evidence when it directly "
+        "answers the user's question. Mention uncertainty when the evidence is "
+        "partial. Do not invent reasons, times, or conversations that are not "
+        "present in the evidence. Answer the question directly; do not describe "
+        "why one event was selected."
+    )
+    if profile_block:
+        system_prompt = f"{system_prompt}\n\n{profile_block}"
+
     return await invoke_text(
         prompt=with_monitoring_evidence_context(
             "Evidence bundle:\n" + json.dumps(prompt_payload, indent=2)
         ),
-        system_prompt=with_patient_answer_context(
-            "You are Jeeves, a grounded memory assistant for a dementia-support "
-            "system. Synthesize a concise answer using only the supplied evidence. "
-            "Prefer transcript evidence when it directly answers the user's question. "
-            "Mention uncertainty when the evidence is partial. Do not invent reasons, "
-            "times, or conversations that are not present in the evidence. Answer the "
-            "question directly; do not describe why one event was selected."
-        ),
+        system_prompt=system_prompt,
         model_id=registry.synthesis,
         max_tokens=500,
     )
@@ -391,6 +399,11 @@ async def _handle_semantic_query(query: str) -> JeevesResponse:
         return _build_activity_response(time_result.text, response_data)
 
     if decision.decision == "insufficient_evidence":
+        profile_block = await render_profile_block()
+        if profile_block:
+            response_data["profile_fallback_used"] = True
+            text = await _synthesize_semantic_answer(query, semantic_result)
+            return _build_activity_response(text, response_data)
         if semantic_result.success and semantic_result.text:
             text = semantic_result.text
         else:
@@ -446,14 +459,20 @@ async def _handle_general_query(
             f"{conversation_context}\n\n"
             f"Current user message: {query}"
         )
+    profile_block = await render_profile_block()
+    system_prompt = with_patient_answer_context(
+        "You are a kind, concise assistant for a dementia-support system. "
+        "Answer naturally and do not promise unsupported features. You may "
+        "use the short-term conversation context and durable profile facts to "
+        "understand follow-up messages, but do not treat conversation context "
+        "as stored monitoring evidence."
+    )
+    if profile_block:
+        system_prompt = f"{system_prompt}\n\n{profile_block}"
+
     text = await invoke_text(
         prompt=prompt,
-        system_prompt=with_patient_answer_context(
-            "You are a kind, concise assistant for a dementia-support system. "
-            "Answer naturally and do not promise unsupported features. You may "
-            "use the short-term conversation context to understand follow-up "
-            "messages, but do not treat it as stored monitoring evidence."
-        ),
+        system_prompt=system_prompt,
         model_id=registry.synthesis,
         max_tokens=300,
     )

@@ -2,7 +2,7 @@
 
 ## Project Purpose
 
-Project Memoria is a memory-grounded, voice-enabled dementia assistant. Home cameras record short room events; the backend turns them into durable memory records in MongoDB; the patient asks questions by text or voice and gets grounded answers; the agent proactively starts conversations for safety warnings, geofence exits, morning reports, and reminders; caregivers see derived context, not raw surveillance.
+Project Memoria is a memory-grounded, voice-enabled dementia assistant. Home cameras record short room events; the backend turns them into durable memory records in MongoDB; the patient asks questions by text or voice and gets grounded answers; the agent proactively starts conversations for safety warnings, morning reports, and time- and event-triggered reminders ("don't forget your water bottle" as the patient is seen leaving for a walk); caregivers see derived context, not raw surveillance.
 
 The project targets two hackathon submissions from one codebase via a hot-swappable provider layer: Qwen Cloud (MemoryAgent track, due July 20, 2026, 2pm PT, `LLM_PROVIDER=qwen`) and OpenAI Build Week (Apps for Your Life, due July 21, 2026, 5pm PT, `LLM_PROVIDER=openai`).
 

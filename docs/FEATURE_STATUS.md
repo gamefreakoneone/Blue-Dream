@@ -11,9 +11,9 @@ Two hard deadlines govern sequencing: **Qwen Cloud submission July 20, 2026, 2pm
 | 0003 | LLM Provider Layer | Completed | `docs/specs/0003-llm-provider-layer/status.md` | Unified async client, direct consumer migration, provider-specific Chroma collections, and FastAPI client-cache cleanup; 49 offline tests pass. First live model validation remains in 0005 on Qwen. |
 | 0004 | Capture Pipeline Fix | Completed | `docs/specs/0004-capture-pipeline-fix/status.md` | Commit `653a652`; per-camera capture/state refactor, CWD-independent config, async caretaker fall alerts; 68 tests pass and one-camera live capture verified. Qwen/OSS understanding remains in 0005. |
 | 0005 | Qwen Provider | Completed | `docs/specs/0005-qwen-provider/status.md` | Commit `73de261`; 74 tests and the 9/9 live DashScope/OSS spike pass. User-run textual routes worked, Qwen Chroma contains 42 records beside the preserved 40-record legacy collection, and genuine event `6a5bfb30d5533af854270f0a` persisted its transcript, video description, and canonical OSS key. Video ladder: OSS-URL Qwen → full-video Gemini → partial event, with no frame sampling. |
-| 0006 | Durable Memory | Not started | `docs/specs/0006-durable-memory/status.md` | Mongo-backed conversations, profile facts, reminders. |
+| 0006 | Durable Memory | Completed | `docs/specs/0006-durable-memory/status.md` | 87 tests plus isolated live Qwen/API restart rehearsal pass; Mongo-backed conversations, deduplicated profile facts, and time/event reminders are durable. Commit hash pending evidence update. |
 | 0007 | Memory Lifecycle | Not started | `docs/specs/0007-memory-lifecycle/status.md` | Importance at ingest, consolidation, pinning, context-budgeted recall, recall debug panel. |
-| 0008 | Proactive Channel | Not started | `docs/specs/0008-proactive-channel/status.md` | Trigger engine (safety, geofence, morning report, reminders) + polled agent-initiated chat. |
+| 0008 | Proactive Channel | Not started | `docs/specs/0008-proactive-channel/status.md` | Trigger engine (safety, morning report, time + event-triggered reminders) + polled agent-initiated chat. Geofence check-ins descoped to backlog. |
 | 0009 | Voice Agent | Not started | `docs/specs/0009-voice-agent/status.md` | Server-side ASR/TTS endpoints + mic UI; browser Web Speech fallback ladder. |
 | 0010 | Alibaba Deployment (stretch) | Not started | `docs/specs/0010-alibaba-deployment/status.md` | Docker/compose, `/ingest/event`, beginner ECS walkthrough. Skippable: DashScope usage already satisfies proof. |
 | 0011 | Qwen Submission | Not started | `docs/specs/0011-qwen-submission/status.md` | README rewrite, architecture diagram, <3min video, checklist. Submit by ~noon PT Jul 20. |
@@ -31,10 +31,11 @@ Two hard deadlines govern sequencing: **Qwen Cloud submission July 20, 2026, 2pm
 1. Video understanding degrades down its ladder: OSS-URL Qwen analysis → full-video Gemini fallback → partial event. Frame sampling is intentionally excluded for long recordings. Qwen-VL grounding (core in 0005) is the first cut lever — if the schedule slips it degrades to the Gemini fallback.
 2. Spec 0010 ECS deployment is skipped entirely (DashScope usage in code is sufficient proof).
 3. Voice degrades from DashScope ASR/TTS to the browser Web Speech API (fallback tasks in 0009).
+4. Event-triggered reminders degrade to schema-only (0006 keeps the `trigger_type` field; the 0008 matcher is dropped); the demo uses time-based reminders.
 
 ## Post-Hackathon Backlog
 
-Full `src/` package restructure; facial recognition; mobile push delivery fix (provider mismatch, geofence screen, SDK-54 notification triggers); Telegram/SMS caregiver channel.
+Full `src/` package restructure; facial recognition; mobile push delivery fix (provider mismatch, geofence screen, SDK-54 notification triggers); geofence proactive check-ins (exit detection → check-in message + route-home action); Telegram/SMS caregiver channel.
 
 ## Update Rule
 

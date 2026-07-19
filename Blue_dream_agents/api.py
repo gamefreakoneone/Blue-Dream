@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -28,10 +29,28 @@ try:
         register_device,
         update_current_geofence,
     )
-    from .db_client import close_mongo_client, ensure_events_indexes
+    from .db_client import (
+        close_mongo_client,
+        ensure_conversation_indexes,
+        ensure_events_indexes,
+        ensure_profile_indexes,
+        ensure_reminder_indexes,
+    )
     from .jeeves import run_single_query
     from .llm.client import close_llm_clients
     from .media_paths import to_fs_path
+    from .profile_memory import (
+        archive_fact,
+        extract_and_store,
+        get_active_facts,
+        pin_fact,
+    )
+    from .reminder_service import (
+        ReminderCreate,
+        create_reminder,
+        list_active as list_active_reminders,
+        mark_done,
+    )
 except ImportError:
     from conversation_memory import (
         append_conversation_turn,
@@ -48,13 +67,32 @@ except ImportError:
         register_device,
         update_current_geofence,
     )
-    from db_client import close_mongo_client, ensure_events_indexes
+    from db_client import (
+        close_mongo_client,
+        ensure_conversation_indexes,
+        ensure_events_indexes,
+        ensure_profile_indexes,
+        ensure_reminder_indexes,
+    )
     from jeeves import run_single_query
     from llm.client import close_llm_clients
     from media_paths import to_fs_path
+    from profile_memory import (
+        archive_fact,
+        extract_and_store,
+        get_active_facts,
+        pin_fact,
+    )
+    from reminder_service import (
+        ReminderCreate,
+        create_reminder,
+        list_active as list_active_reminders,
+        mark_done,
+    )
 
 logger = logging.getLogger(__name__)
 GENERIC_ERROR_DETAIL = "Something went wrong. Please try again in a moment."
+_background_tasks: set[asyncio.Task] = set()
 
 # Configure logging to show INFO level for our modules
 logging.basicConfig(
@@ -68,12 +106,17 @@ async def lifespan(app: FastAPI):
     try:
         await ensure_events_indexes()
         await initialize_alert_indexes()
+        await ensure_conversation_indexes()
+        await ensure_profile_indexes()
+        await ensure_reminder_indexes()
     except Exception as exc:
         logger.warning("MongoDB index setup skipped or failed: %s", exc)
 
     try:
         yield
     finally:
+        if _background_tasks:
+            await asyncio.gather(*list(_background_tasks), return_exceptions=True)
         try:
             await close_llm_clients()
         finally:
@@ -126,20 +169,48 @@ class GeofenceEventRequest(BaseModel):
     device_id: Optional[str] = None
 
 
+async def _extract_turn_memory_safely(
+    user_text: str,
+    assistant_text: str,
+    session_id: Optional[str],
+) -> None:
+    try:
+        await extract_and_store(
+            user_text,
+            assistant_text,
+            session_id=session_id,
+        )
+    except Exception:
+        logger.exception("Post-response durable-memory extraction failed")
+
+
+def _schedule_turn_memory_extraction(
+    user_text: str,
+    assistant_text: str,
+    session_id: Optional[str],
+) -> None:
+    task = asyncio.create_task(
+        _extract_turn_memory_safely(user_text, assistant_text, session_id)
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
 @app.post("/query")
 async def query_jeeves(request: QueryRequest):
     try:
         logger.info("[API] Received query: '%s'", request.query[:100])
-        conversation_context = get_conversation_context(request.session_id)
+        conversation_context = await get_conversation_context(request.session_id)
         response = await run_single_query(
             request.query,
             conversation_context=conversation_context,
         )
-        append_conversation_turn(
+        await append_conversation_turn(request.session_id, "user", request.query)
+        await append_conversation_turn(request.session_id, "assistant", response.text)
+        _schedule_turn_memory_extraction(
+            request.query,
+            response.text,
             request.session_id,
-            user=request.query,
-            assistant=response.text,
-            response_type=response.response_type,
         )
         logger.info(
             "[API] Response: type=%s, has_image=%s, text_length=%d",
@@ -157,8 +228,74 @@ async def query_jeeves(request: QueryRequest):
 
 @app.post("/conversation/reset")
 async def reset_conversation_session(request: ConversationResetRequest):
-    reset_conversation(request.session_id)
+    await reset_conversation(request.session_id)
     return {"ok": True}
+
+
+@app.get("/memory/profile")
+async def get_memory_profile():
+    try:
+        return {"facts": await get_active_facts()}
+    except Exception:
+        logger.exception("Profile memory list failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
+@app.post("/memory/profile/{fact_id}/pin")
+async def pin_memory_profile_fact(fact_id: str):
+    try:
+        if not await pin_fact(fact_id):
+            raise HTTPException(status_code=404, detail="Profile fact not found")
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Profile fact pin failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
+@app.post("/memory/profile/{fact_id}/archive")
+async def archive_memory_profile_fact(fact_id: str):
+    try:
+        if not await archive_fact(fact_id):
+            raise HTTPException(status_code=404, detail="Profile fact not found")
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Profile fact archive failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
+@app.get("/reminders")
+async def get_reminders():
+    try:
+        return {"reminders": await list_active_reminders()}
+    except Exception:
+        logger.exception("Reminder list failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
+@app.post("/reminders")
+async def post_reminder(request: ReminderCreate):
+    try:
+        return await create_reminder(request, source="api", origin_context=None)
+    except Exception:
+        logger.exception("Reminder creation failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
+@app.post("/reminders/{reminder_id}/done")
+async def complete_reminder(reminder_id: str):
+    try:
+        if not await mark_done(reminder_id):
+            raise HTTPException(status_code=404, detail="Reminder not found")
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Reminder completion failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 
 @app.post("/devices/register")

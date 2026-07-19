@@ -28,8 +28,7 @@ The new-work narrative: **everything in specs 0001–0012** was implemented duri
   1. **Patient profile facts** — list with category badges, pin/archive buttons (existing 0006 endpoints).
   2. **Daily summaries** — `memory_summaries` timeline (new `GET /memory/summaries?days=7`), plus a "Run memory cleanup" button (`POST /memory/consolidate`) showing the report.
   3. **Alerts** — recent `safety_alerts` including caretaker-targeted fall alerts (new `GET /alerts/recent?limit=20` returning all target roles), severity/status badges, highlighted images.
-  4. **Geofence** — current settings + update form (existing `GET/PUT /geofence/current`).
-  5. **Reminders** — active list + create form (existing 0006 endpoints).
+  4. **Reminders** — active list + create form (existing 0006 endpoints).
 - Privacy framing visible on the page: the caregiver sees derived summaries, alerts, and facts — never raw video or audio.
 
 ### Submission package
@@ -54,6 +53,6 @@ The new-work narrative: **everything in specs 0001–0012** was implemented duri
 ## Acceptance Criteria
 
 - Contract tests pass under provider-mocked config; live smoke on GPT-5.6 answers all four query types (this spec is the only place the openai profile is exercised live); structured calls use the json_schema branch (verified by request inspection in tests).
-- Dashboard renders all five sections against real data; pin/archive/consolidate/geofence-update actions work.
+- Dashboard renders all four sections against real data; pin/archive/consolidate actions work.
 - Video public, <3:00, explicitly demonstrates Codex/GPT-5.6 usage; submission confirmed before 5pm PT July 21 (target 3pm).
 - `openai-submission` tag; `docs/SUBMISSIONS.md` complete.

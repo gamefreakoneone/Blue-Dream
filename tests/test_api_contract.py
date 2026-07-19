@@ -92,6 +92,21 @@ def test_lifespan_initializes_and_closes_clients(monkeypatch, api_module):
     )
     monkeypatch.setattr(
         api_module,
+        "ensure_conversation_indexes",
+        lambda: record("conversations"),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "ensure_profile_indexes",
+        lambda: record("profile"),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "ensure_reminder_indexes",
+        lambda: record("reminders"),
+    )
+    monkeypatch.setattr(
+        api_module,
         "close_llm_clients",
         lambda: record("llm-close"),
     )
@@ -104,7 +119,15 @@ def test_lifespan_initializes_and_closes_clients(monkeypatch, api_module):
     with TestClient(api_module.app):
         pass
 
-    assert calls == ["events", "alerts", "llm-close", "mongo-close"]
+    assert calls == [
+        "events",
+        "alerts",
+        "conversations",
+        "profile",
+        "reminders",
+        "llm-close",
+        "mongo-close",
+    ]
 
 
 def test_lifespan_tolerates_index_failure(monkeypatch, api_module):

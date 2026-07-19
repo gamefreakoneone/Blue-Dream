@@ -36,6 +36,15 @@ def client(monkeypatch, api_module):
     async def noop():
         return None
 
+    async def empty_context(session_id):
+        return ""
+
+    async def noop_memory(*args, **kwargs):
+        return False
+
+    async def noop_extraction(*args, **kwargs):
+        return None
+
     async def canned_query(query, conversation_context=None):
         return JeevesResponse(
             response_type="general",
@@ -46,9 +55,16 @@ def client(monkeypatch, api_module):
 
     monkeypatch.setattr(api_module, "ensure_events_indexes", noop)
     monkeypatch.setattr(api_module, "initialize_alert_indexes", noop)
+    monkeypatch.setattr(api_module, "ensure_conversation_indexes", noop)
+    monkeypatch.setattr(api_module, "ensure_profile_indexes", noop)
+    monkeypatch.setattr(api_module, "ensure_reminder_indexes", noop)
     monkeypatch.setattr(api_module, "close_llm_clients", noop)
     monkeypatch.setattr(api_module, "close_mongo_client", noop)
     monkeypatch.setattr(api_module, "run_single_query", canned_query)
+    monkeypatch.setattr(api_module, "get_conversation_context", empty_context)
+    monkeypatch.setattr(api_module, "append_conversation_turn", noop_memory)
+    monkeypatch.setattr(api_module, "reset_conversation", noop_memory)
+    monkeypatch.setattr(api_module, "extract_and_store", noop_extraction)
 
     with TestClient(api_module.app) as test_client:
         yield test_client

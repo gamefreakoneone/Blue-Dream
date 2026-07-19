@@ -109,12 +109,13 @@ Retrieval flow:
 
 - **Conversation memory** (`conversation_sessions`): persisted turns with automatic summarization beyond a turn limit; survives restarts; still never indexed in Chroma and never used as monitoring evidence.
 - **Profile facts** (`profile_facts`): stable personal facts extracted after chat turns, LLM-deduplicated, small enough to always inject into prompts; pin/archive via API.
-- **Reminders** (`reminders`): timed items created from chat or API, delivered by the proactive channel.
+- **Reminders** (`reminders`): created from chat or API in two kinds discriminated by `trigger_type` — `time` (wall-clock `due_at`, optional daily recurrence) and `event` (fires when a matching camera event is ingested: room + local-time window + natural-language behavior condition + optional `valid_date`). Chat-created reminders carry `origin_context` (session id + original phrasing) in Mongo as an audit trail. Delivery is the proactive channel's job; `reminder_service` exposes `get_due_reminders(now)` and `get_matchable_event_reminders(now)` for it.
+- **Working memory**: the small always-injected context block — active profile facts plus active reminders — served by plain indexed MongoDB reads on every prompt. Deliberately *not* a file on disk (the API server and capture pipeline are separate processes, and MongoDB is the single source of truth) and *not* vector-backed (no embedding or Chroma lookup is involved; retrieval is a few milliseconds). This is the fast-recall tier for things the agent must never have to search for.
 - **Lifecycle**: importance scored at ingest; a consolidation job groups old low-importance events by day + room into `memory_summaries`, embeds the summary, removes the originals from Chroma, and marks them `consolidated` in MongoDB. Nothing is ever deleted; the time agent reads MongoDB directly and is unaffected. Pinned items never consolidate.
 
 ## Proactive Channel
 
-`proactive_messages` records are created by triggers: safety alert stored (actionable patient warning), geofence exit (check-in + Google Maps home link), first sighting of the day (morning report), reminder due. The web UI polls `GET /proactive/pending` every few seconds and renders messages as agent-initiated chat turns; acknowledgment marks them delivered. No push infrastructure.
+`proactive_messages` records are created by triggers: safety alert stored (actionable patient warning), first sighting of the day (morning report), time reminder due, and event-triggered reminder matched (a just-ingested camera event satisfies an active event reminder's room + time window + behavior condition; LLM condition matching is gated by `EVENT_REMINDER_LLM_MATCH` with a deterministic room+window fallback). The web UI polls `GET /proactive/pending` every few seconds and renders messages as agent-initiated chat turns; acknowledgment marks them delivered. No push infrastructure. Geofence check-in messages are post-hackathon backlog; the existing geofence endpoints remain preserved contracts with no new behavior.
 
 ## Critical Design Rules
 

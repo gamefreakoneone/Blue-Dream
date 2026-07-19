@@ -37,7 +37,7 @@ Script (adjust to what actually demos best; rehearse from a clean start first):
 2. 0:25–0:55 — grounded recall: spoken "where is my water bottle?" → highlighted image answer; "what was I doing yesterday?" → timeline.
 3. 0:55–1:25 — memory that persists: personal fact from a previous session used in a fresh session; backend restart mid-conversation survives.
 4. 1:25–2:00 — memory hygiene: consolidation collapses a mundane day; pinned medication memory recalled from a week ago; the "Memory used" panel showing recency/importance ranking.
-5. 2:00–2:30 — the agent speaks first: hazard warning bubble with highlighted image; geofence check-in with "Guide me home"; morning report.
+5. 2:00–2:30 — the agent speaks first: hazard warning bubble with highlighted image; event-triggered reminder ("don't forget your water bottle" as the patient is seen leaving for a walk); morning report.
 6. 2:30–3:00 — architecture slide: Qwen end-to-end (models named), MongoDB + Chroma, Alibaba Cloud; close on the mission.
 
 ### Final rehearsal

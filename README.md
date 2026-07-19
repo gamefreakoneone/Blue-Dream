@@ -17,6 +17,7 @@ Memoria is designed around one practical idea: use local, grounded AI to help pa
 - **Grounded memory chat**: Patients can ask natural-language questions about objects, activities, rooms, and recent events.
 - **Current-state object finding**: The assistant checks the latest room snapshots first, then falls back to historical memory when the object is not currently visible.
 - **Semantic recall**: Past room events are normalized into canonical memory records, embedded through the configured provider, and indexed in ChromaDB for evidence retrieval.
+- **Durable patient memory**: Conversation context, stable profile facts, and patient-created reminders survive backend restarts in MongoDB without entering the monitoring-evidence index.
 - **Safety reasoning prototype**: Factual observations from room events can be judged for patient-actionable risks, such as unattended cooking or ambiguous hazards.
 - **Patient web UI**: FastAPI serves a lightweight Memoria chat interface at `http://localhost:8000`.
 - **Expo mobile app**: The React Native app supports chat, New Chat, alert list/detail screens, acknowledgement actions, geofence guidance, deep links, and notification scaffolding.
@@ -67,6 +68,7 @@ At a high level:
 - **Backend**: FastAPI
 - **Durable event store**: MongoDB `dementia_assistance.events`
 - **Alert store**: MongoDB `dementia_assistance.safety_alerts`
+- **Durable working memory**: MongoDB `conversation_sessions`, `profile_facts`, and `reminders`
 - **Semantic index**: ChromaDB collections named `memory_events__{provider}__{model_slug}__{dim}`
 - **Video perception**: `qwen3-vl-flash` via private OSS URL; full-video Gemini fallback
 - **Spatial highlighting**: `qwen3-vl-plus`; Gemini fallback
@@ -174,6 +176,10 @@ OSS_PRESIGN_TTL_SECONDS=3600
 # Leave blank for the repository-root Storage/chroma directory; otherwise use an absolute path.
 CHROMA_PERSIST_DIR=
 SEMANTIC_SEARCH_TOP_K=5
+
+# Durable working-memory limits
+CONVERSATION_MAX_TURNS=12
+PROFILE_MAX_ACTIVE_FACTS=50
 
 # Database
 MONGODB_URI=mongodb://localhost:27017
@@ -322,7 +328,20 @@ Response body:
 { "ok": true }
 ```
 
-Conversation memory is process-local and short-term only. It is not durable patient memory and is not embedded in ChromaDB.
+Conversation memory is durable in MongoDB. Closed sessions remain archived, overflow turns are summarized, and conversation text is never embedded in ChromaDB or used as monitoring evidence.
+
+### Profile Memory and Reminders
+
+```text
+GET  /memory/profile
+POST /memory/profile/{fact_id}/pin
+POST /memory/profile/{fact_id}/archive
+GET  /reminders
+POST /reminders
+POST /reminders/{reminder_id}/done
+```
+
+Profile facts are extracted after chat responses, deduplicated, and injected into general-chat and grounded synthesis prompts. Reminder creation accepts either a time trigger (`due_at`, optional daily recurrence) or an event trigger containing a room, local-time window, behavior condition, and optional valid date. Delivery and camera-event matching arrive in spec 0008.
 
 ### Mobile Alerts
 
@@ -394,8 +413,8 @@ The first geofence implementation is intentionally prototype-simple: the backend
 Current overhaul status is tracked in [`docs/FEATURE_STATUS.md`](docs/FEATURE_STATUS.md).
 
 - **Validated offline**: unified provider resolution/client contracts, structured JSON hardening, provider-specific semantic indexes, media paths, and existing backend contracts.
-- **Current**: spec 0005 Qwen provider integration and its live end-to-end gate.
-- **Planned**: durable memory, lifecycle, proactive turns, voice, submission polish, and the OpenAI provider flip.
+- **Current**: spec 0006 durable conversation, profile, and reminder memory.
+- **Planned**: memory lifecycle, proactive turns, voice, submission polish, and the OpenAI provider flip.
 
 ## Historical Kaggle Project Description
 
