@@ -107,6 +107,11 @@ def test_lifespan_initializes_and_closes_clients(monkeypatch, api_module):
     )
     monkeypatch.setattr(
         api_module,
+        "ensure_memory_lifecycle_indexes",
+        lambda: record("lifecycle"),
+    )
+    monkeypatch.setattr(
+        api_module,
         "close_llm_clients",
         lambda: record("llm-close"),
     )
@@ -125,6 +130,7 @@ def test_lifespan_initializes_and_closes_clients(monkeypatch, api_module):
         "conversations",
         "profile",
         "reminders",
+        "lifecycle",
         "llm-close",
         "mongo-close",
     ]

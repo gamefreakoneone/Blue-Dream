@@ -173,11 +173,39 @@ def upsert_event_embedding(event: MemoryEvent, embedding: list[float]) -> None:
         metadatas=[
             {
                 "event_id": event.event_id,
+                "type": "event",
                 "room_number": event.room_number,
                 "room_name": event.room_name,
                 "timestamp": event.timestamp.isoformat(),
                 "has_screenshot": bool(event.screenshot_path),
                 **embedding_metadata,
+            }
+        ],
+    )
+
+
+def upsert_summary_embedding(summary: dict[str, Any], embedding: list[float]) -> None:
+    expected_dimension = get_embedding_dimension()
+    if len(embedding) != expected_dimension:
+        raise ValueError(
+            "Semantic embeddings must be "
+            f"{expected_dimension} dimensions, got {len(embedding)}."
+        )
+
+    summary_id = str(summary["summary_id"])
+    date = str(summary["date"])
+    get_event_collection().upsert(
+        ids=[summary_id],
+        embeddings=[embedding],
+        metadatas=[
+            {
+                "summary_id": summary_id,
+                "type": "summary",
+                "date": date,
+                "timestamp": date,
+                "room_number": int(summary["room_number"]),
+                "room_name": str(summary.get("room_name", "")),
+                **get_embedding_metadata(),
             }
         ],
     )
@@ -208,6 +236,8 @@ def query_similar_embeddings(
         matches.append(
             {
                 "event_id": event_id,
+                "memory_id": event_id,
+                "type": (metadata or {}).get("type", "event"),
                 "distance": distance,
                 "metadata": metadata or {},
             }

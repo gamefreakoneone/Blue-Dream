@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime
-from typing import Any
+from typing import Any, Literal
 
 from bson import ObjectId
 from pydantic import BaseModel, Field
@@ -39,6 +39,11 @@ class MemoryEvent(BaseModel):
     observed_hazards: list[str] = Field(default_factory=list)
     uncertainties: list[str] = Field(default_factory=list)
     safety_assessment: dict[str, Any] | None = None
+    importance: float = Field(default=0.5, ge=0.0, le=1.0)
+    importance_reason: str = ""
+    pinned: bool = False
+    lifecycle_status: Literal["active", "consolidated"] = "active"
+    consolidated_into: str | None = None
 
 
 def get_room_name(room_number: int) -> str:
@@ -96,6 +101,18 @@ def _normalize_text(value: Any) -> str:
     return str(value).strip()
 
 
+def _normalize_importance(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.5
+    return max(0.0, min(1.0, parsed))
+
+
+def _normalize_lifecycle_status(value: Any) -> Literal["active", "consolidated"]:
+    return "consolidated" if value == "consolidated" else "active"
+
+
 def build_semantic_text(event: MemoryEvent) -> str:
     sections = [
         f"Room: {event.room_name}",
@@ -142,6 +159,11 @@ def memory_event_from_mongo(doc: dict[str, Any]) -> MemoryEvent:
         safety_assessment=doc.get("safety_assessment")
         if isinstance(doc.get("safety_assessment"), dict)
         else None,
+        importance=_normalize_importance(doc.get("importance", 0.5)),
+        importance_reason=_normalize_text(doc.get("importance_reason")),
+        pinned=bool(doc.get("pinned", False)),
+        lifecycle_status=_normalize_lifecycle_status(doc.get("lifecycle_status")),
+        consolidated_into=_normalize_text(doc.get("consolidated_into")) or None,
     )
     event.semantic_text = _normalize_text(doc.get("semantic_text")) or build_semantic_text(event)
     return event
@@ -206,6 +228,11 @@ def memory_event_to_mongo(event: MemoryEvent) -> dict[str, Any]:
         "observed_hazards": event.observed_hazards,
         "uncertainties": event.uncertainties,
         "safety_assessment": event.safety_assessment,
+        "importance": event.importance,
+        "importance_reason": event.importance_reason,
+        "pinned": event.pinned,
+        "lifecycle_status": event.lifecycle_status,
+        "consolidated_into": event.consolidated_into,
     }
     if ObjectId.is_valid(event.event_id):
         document["_id"] = ObjectId(event.event_id)

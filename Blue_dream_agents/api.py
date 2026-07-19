@@ -35,10 +35,13 @@ try:
         ensure_events_indexes,
         ensure_profile_indexes,
         ensure_reminder_indexes,
+        ensure_memory_lifecycle_indexes,
     )
     from .jeeves import run_single_query
     from .llm.client import close_llm_clients
+    from .llm.settings import get_provider_settings
     from .media_paths import to_fs_path
+    from .memory_lifecycle import pin_event, run_consolidation, unpin_event
     from .profile_memory import (
         archive_fact,
         extract_and_store,
@@ -73,10 +76,13 @@ except ImportError:
         ensure_events_indexes,
         ensure_profile_indexes,
         ensure_reminder_indexes,
+        ensure_memory_lifecycle_indexes,
     )
     from jeeves import run_single_query
     from llm.client import close_llm_clients
+    from llm.settings import get_provider_settings
     from media_paths import to_fs_path
+    from memory_lifecycle import pin_event, run_consolidation, unpin_event
     from profile_memory import (
         archive_fact,
         extract_and_store,
@@ -109,8 +115,16 @@ async def lifespan(app: FastAPI):
         await ensure_conversation_indexes()
         await ensure_profile_indexes()
         await ensure_reminder_indexes()
+        await ensure_memory_lifecycle_indexes()
     except Exception as exc:
         logger.warning("MongoDB index setup skipped or failed: %s", exc)
+
+    try:
+        if get_provider_settings().consolidate_on_startup:
+            report = await run_consolidation()
+            logger.info("Startup memory consolidation: %s", report.model_dump())
+    except Exception:
+        logger.exception("Startup memory consolidation failed; server will continue")
 
     try:
         yield
@@ -264,6 +278,41 @@ async def archive_memory_profile_fact(fact_id: str):
         raise
     except Exception:
         logger.exception("Profile fact archive failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
+@app.post("/memory/consolidate")
+async def consolidate_memory_events():
+    try:
+        return (await run_consolidation()).model_dump(mode="json")
+    except Exception:
+        logger.exception("Memory consolidation endpoint failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
+@app.post("/memory/events/{event_id}/pin")
+async def pin_memory_event(event_id: str):
+    try:
+        if not await pin_event(event_id):
+            raise HTTPException(status_code=404, detail="Memory event not found")
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Memory event pin failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
+@app.post("/memory/events/{event_id}/unpin")
+async def unpin_memory_event(event_id: str):
+    try:
+        if not await unpin_event(event_id):
+            raise HTTPException(status_code=404, detail="Memory event not found")
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Memory event unpin failed")
         raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 

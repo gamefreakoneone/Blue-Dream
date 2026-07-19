@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import json
 import logging
 import time
@@ -20,6 +21,10 @@ try:
     )
     from .llm.settings import get_provider_settings
     from .memory_schema import MemoryEvent, memory_event_from_mongo
+    from .memory_schema import normalize_timestamp
+    from .profile_memory import get_active_facts
+    from .prompt_budget import RecallCandidate, RecallPack, pack_recall
+    from .timezone_utils import LOCAL_TZ, now_local
     from .vector_store import (
         count_indexed_events,
         delete_event_ids,
@@ -29,6 +34,7 @@ try:
         query_similar_embeddings,
         reset_active_event_collection,
         upsert_event_embedding,
+        upsert_summary_embedding,
     )
 except ImportError:
     from db_client import get_mongo_client, close_mongo_client
@@ -41,6 +47,10 @@ except ImportError:
     )
     from llm.settings import get_provider_settings
     from memory_schema import MemoryEvent, memory_event_from_mongo
+    from memory_schema import normalize_timestamp
+    from profile_memory import get_active_facts
+    from prompt_budget import RecallCandidate, RecallPack, pack_recall
+    from timezone_utils import LOCAL_TZ, now_local
     from vector_store import (
         count_indexed_events,
         delete_event_ids,
@@ -50,6 +60,7 @@ except ImportError:
         query_similar_embeddings,
         reset_active_event_collection,
         upsert_event_embedding,
+        upsert_summary_embedding,
     )
 
 
@@ -58,7 +69,10 @@ logger = logging.getLogger(__name__)
 
 class SemanticMatch(BaseModel):
     event_id: str
+    memory_type: str = "event"
     score: float
+    final_score: float = 0.0
+    pinned: bool = False
     timestamp: str
     room_name: str
     semantic_text: str
@@ -66,6 +80,22 @@ class SemanticMatch(BaseModel):
     video_description: str = ""
     transcript_length: int = 0
     screenshot_path: Optional[str] = None
+
+
+class RecallDebugMemory(BaseModel):
+    id: str
+    type: str
+    timestamp: str
+    similarity: float
+    final_score: float
+    pinned: bool
+
+
+class RecallDebug(BaseModel):
+    considered_count: int = 0
+    packed_count: int = 0
+    excluded_count: int = 0
+    memories: list[RecallDebugMemory] = Field(default_factory=list)
 
 
 class SemanticSearchResult(BaseModel):
@@ -77,6 +107,7 @@ class SemanticSearchResult(BaseModel):
     index_status: str = "ready"
     error_code: Optional[str] = None
     matches: List[SemanticMatch] = Field(default_factory=list)
+    recall_debug: RecallDebug = Field(default_factory=RecallDebug)
 
 
 _sync_lock = asyncio.Lock()
@@ -99,6 +130,15 @@ async def index_memory_event(event: MemoryEvent) -> None:
     embeddings = await embed_texts([event.semantic_text])
     embedding = embeddings[0]
     await _run_blocking(upsert_event_embedding, event, embedding)
+
+
+async def index_memory_summary(summary: dict[str, Any]) -> None:
+    embeddings = await embed_texts([str(summary.get("text", ""))])
+    await _run_blocking(upsert_summary_embedding, summary, embeddings[0])
+
+
+async def delete_memory_embeddings(memory_ids: list[str]) -> None:
+    await _run_blocking(delete_event_ids, memory_ids)
 
 
 def _parse_object_ids(event_ids: list[str]) -> list[ObjectId]:
@@ -124,9 +164,30 @@ async def _fetch_events_by_ids(event_ids: list[str]) -> list[MemoryEvent]:
     events_by_id: dict[str, MemoryEvent] = {}
     async for doc in collection.find(query):
         event = memory_event_from_mongo(doc)
-        events_by_id[event.event_id] = event
+        if event.lifecycle_status == "active":
+            events_by_id[event.event_id] = event
 
     return [events_by_id[event_id] for event_id in event_ids if event_id in events_by_id]
+
+
+async def _fetch_summaries_by_ids(summary_ids: list[str]) -> list[dict[str, Any]]:
+    if not summary_ids:
+        return []
+    collection = get_mongo_client().dementia_assistance.memory_summaries
+    by_id: dict[str, dict[str, Any]] = {}
+    async for document in collection.find({"summary_id": {"$in": summary_ids}}):
+        by_id[str(document.get("summary_id"))] = document
+    return [by_id[value] for value in summary_ids if value in by_id]
+
+
+async def _fetch_pinned_events() -> list[MemoryEvent]:
+    collection = get_mongo_client().dementia_assistance.events
+    events: list[MemoryEvent] = []
+    async for document in collection.find(
+        {"pinned": True, "lifecycle_status": {"$ne": "consolidated"}}
+    ):
+        events.append(memory_event_from_mongo(document))
+    return events
 
 
 async def _count_mongo_events() -> int:
@@ -134,10 +195,29 @@ async def _count_mongo_events() -> int:
     return int(await collection.count_documents({}))
 
 
+async def _indexable_ids() -> set[str]:
+    database = get_mongo_client().dementia_assistance
+    ids: set[str] = set()
+    async for document in database.events.find(
+        {"lifecycle_status": {"$ne": "consolidated"}},
+        {"event_id": 1},
+    ):
+        value = document.get("event_id") or document.get("_id")
+        if value is not None:
+            ids.add(str(value))
+    async for document in database.memory_summaries.find({}, {"summary_id": 1}):
+        value = document.get("summary_id")
+        if value:
+            ids.add(str(value))
+    return ids
+
+
 async def _index_all_mongo_events() -> bool:
-    collection = get_mongo_client().dementia_assistance.events
+    database = get_mongo_client().dementia_assistance
     indexed_any = False
-    async for doc in collection.find().sort("timestamp", 1):
+    async for doc in database.events.find(
+        {"lifecycle_status": {"$ne": "consolidated"}}
+    ).sort("timestamp", 1):
         event = memory_event_from_mongo(doc)
         try:
             await index_memory_event(event)
@@ -148,6 +228,16 @@ async def _index_all_mongo_events() -> bool:
                 event.event_id,
                 exc,
             )
+    async for summary in database.memory_summaries.find().sort("date", 1):
+        try:
+            await index_memory_summary(summary)
+            indexed_any = True
+        except Exception as exc:
+            logger.warning(
+                "Skipping semantic bootstrap for summary %s: %s",
+                summary.get("summary_id"),
+                exc,
+            )
     return indexed_any
 
 
@@ -156,8 +246,7 @@ async def _remove_stale_index_entries() -> int:
     if not indexed_ids:
         return 0
 
-    existing_events = await _fetch_events_by_ids(indexed_ids)
-    existing_ids = {event.event_id for event in existing_events}
+    existing_ids = await _indexable_ids()
     stale_ids = [event_id for event_id in indexed_ids if event_id not in existing_ids]
     if stale_ids:
         await _run_blocking(delete_event_ids, stale_ids)
@@ -191,6 +280,7 @@ async def ensure_semantic_index_synced(force_rebuild: bool = False) -> str:
 
         try:
             indexed_count = await _run_blocking(count_indexed_events)
+            indexed_ids = set(await _run_blocking(list_indexed_event_ids))
         except Exception as exc:
             logger.warning(
                 "Semantic index health check failed; recreating active collection: %s",
@@ -198,22 +288,22 @@ async def ensure_semantic_index_synced(force_rebuild: bool = False) -> str:
             )
             await _run_blocking(reset_active_event_collection)
             indexed_count = 0
+            indexed_ids = set()
             index_status = "reset"
 
-        mongo_count = await _count_mongo_events()
+        expected_ids = await _indexable_ids()
+        mongo_count = len(expected_ids)
         if indexed_count > 0:
-            if indexed_count > mongo_count:
-                removed_count = await _remove_stale_index_entries()
-                if removed_count:
-                    logger.info(
-                        "Removed %d stale semantic index entries.", removed_count
-                    )
-                    indexed_count = await _run_blocking(count_indexed_events)
-            if mongo_count and indexed_count < mongo_count:
+            stale_ids = indexed_ids - expected_ids
+            if stale_ids:
+                await _run_blocking(delete_event_ids, sorted(stale_ids))
+                logger.info("Removed %d stale semantic index entries.", len(stale_ids))
+                indexed_ids -= stale_ids
+            missing_ids = expected_ids - indexed_ids
+            if missing_ids:
                 logger.info(
-                    "Semantic index has %s events but Mongo has %s; syncing missing events.",
-                    indexed_count,
-                    mongo_count,
+                    "Semantic index is missing %s active memories; syncing from Mongo.",
+                    len(missing_ids),
                 )
                 indexed_any = await _index_all_mongo_events()
                 _bootstrapped_collection = collection_name
@@ -234,39 +324,93 @@ async def ensure_semantic_index_synced(force_rebuild: bool = False) -> str:
 
 
 def _distance_to_score(distance: float) -> float:
-    return round(1.0 / (1.0 + max(distance, 0.0)), 4)
+    return 1.0 / (1.0 + max(distance, 0.0))
 
 
-def _match_from_event(event: MemoryEvent, distance: float) -> SemanticMatch:
-    transcript = event.audio_transcript or ""
+def _summary_timestamp(summary: dict[str, Any]) -> dt.datetime:
+    value = summary.get("date")
+    if isinstance(value, dt.datetime):
+        return normalize_timestamp(value).replace(hour=0, minute=0, second=0, microsecond=0)
+    if isinstance(value, dt.date):
+        return dt.datetime.combine(value, dt.time.min, tzinfo=LOCAL_TZ)
+    try:
+        return dt.datetime.combine(dt.date.fromisoformat(str(value)), dt.time.min, tzinfo=LOCAL_TZ)
+    except (TypeError, ValueError):
+        return normalize_timestamp(summary.get("created_at"))
+
+
+def _match_from_packed(item, payload: Any) -> SemanticMatch:
+    if item.type == "event":
+        event: MemoryEvent = payload
+        transcript = event.audio_transcript or ""
+        room_name = event.room_name
+        semantic_text = event.semantic_text
+        video_description = event.video_description
+        screenshot_path = event.screenshot_path or None
+    elif item.type == "summary":
+        transcript = ""
+        room_name = str(payload.get("room_name", ""))
+        semantic_text = str(payload.get("text", ""))
+        video_description = ""
+        screenshot_path = None
+    else:
+        transcript = ""
+        room_name = ""
+        semantic_text = str(payload.get("text", ""))
+        video_description = ""
+        screenshot_path = None
+
     return SemanticMatch(
-        event_id=event.event_id,
-        score=_distance_to_score(distance),
-        timestamp=event.timestamp.isoformat(),
-        room_name=event.room_name,
-        semantic_text=event.semantic_text,
+        event_id=item.id,
+        memory_type=item.type,
+        score=round(item.similarity, 4),
+        final_score=round(item.final_score, 6),
+        pinned=item.pinned,
+        timestamp=item.timestamp.isoformat(),
+        room_name=room_name,
+        semantic_text=semantic_text,
         audio_transcript=transcript,
-        video_description=event.video_description,
+        video_description=video_description,
         transcript_length=len(transcript.strip()),
-        screenshot_path=event.screenshot_path or None,
+        screenshot_path=screenshot_path,
     )
 
 
-async def _summarize_matches(query: str, events: list[MemoryEvent]) -> str:
+def _recall_debug(pack: RecallPack) -> RecallDebug:
+    return RecallDebug(
+        considered_count=pack.considered_count,
+        packed_count=len(pack.included),
+        excluded_count=pack.excluded_count,
+        memories=[
+            RecallDebugMemory(
+                id=item.id,
+                type=item.type,
+                timestamp=item.timestamp.isoformat(),
+                similarity=round(item.similarity, 4),
+                final_score=round(item.final_score, 6),
+                pinned=item.pinned,
+            )
+            for item in pack.included
+        ],
+    )
+
+
+async def _summarize_matches(query: str, matches: list[SemanticMatch]) -> str:
     registry = get_model_registry()
     context = [
         {
-            "event_id": event.event_id,
-            "timestamp": event.timestamp.isoformat(),
-            "room_name": event.room_name,
-            "semantic_text": event.semantic_text,
-            "audio_transcript": event.audio_transcript,
+            "id": match.event_id,
+            "type": match.memory_type,
+            "timestamp": match.timestamp,
+            "room_name": match.room_name,
+            "semantic_text": match.semantic_text,
+            "audio_transcript": match.audio_transcript,
         }
-        for event in events
+        for match in matches
     ]
     prompt = with_monitoring_evidence_context(
         f'User question: "{query}"\n'
-        f"Relevant memory events:\n{json.dumps(context, indent=2)}\n\n"
+        f"Relevant packed memories:\n{json.dumps(context, indent=2)}\n\n"
         "Answer in 2-3 short sentences. Be specific, grounded, and mention uncertainty "
         "if the memories are only a partial match."
     )
@@ -293,7 +437,102 @@ async def _run_semantic(
         index_status = await ensure_semantic_index_synced()
         query_embedding = (await embed_texts([query]))[0]
         raw_matches = await _run_blocking(query_similar_embeddings, query_embedding, top_k)
-        if not raw_matches:
+        event_hit_ids = [
+            str(match["memory_id"])
+            for match in raw_matches
+            if match.get("type", "event") != "summary"
+        ]
+        summary_hit_ids = [
+            str(match["memory_id"])
+            for match in raw_matches
+            if match.get("type") == "summary"
+        ]
+        matched_events, matched_summaries, pinned_events, active_facts = await asyncio.gather(
+            _fetch_events_by_ids(event_hit_ids),
+            _fetch_summaries_by_ids(summary_hit_ids),
+            _fetch_pinned_events(),
+            get_active_facts(),
+        )
+
+        payloads: dict[tuple[str, str], Any] = {}
+        candidates: dict[tuple[str, str], RecallCandidate] = {}
+        raw_by_key = {
+            (str(match.get("type", "event")), str(match["memory_id"])): match
+            for match in raw_matches
+        }
+        for event in matched_events:
+            key = ("event", event.event_id)
+            raw = raw_by_key.get(key)
+            similarity = _distance_to_score(float(raw["distance"])) if raw else 0.0
+            payloads[key] = event
+            candidates[key] = RecallCandidate(
+                id=event.event_id,
+                type="event",
+                text=event.semantic_text,
+                timestamp=event.timestamp,
+                similarity=similarity,
+                importance=event.importance,
+                pinned=event.pinned,
+            )
+        for summary in matched_summaries:
+            summary_id = str(summary.get("summary_id"))
+            key = ("summary", summary_id)
+            raw = raw_by_key.get(key)
+            similarity = _distance_to_score(float(raw["distance"])) if raw else 0.0
+            payloads[key] = summary
+            candidates[key] = RecallCandidate(
+                id=summary_id,
+                type="summary",
+                text=str(summary.get("text", "")),
+                timestamp=_summary_timestamp(summary),
+                similarity=similarity,
+                importance=0.5,
+                pinned=False,
+            )
+        for event in pinned_events:
+            key = ("event", event.event_id)
+            payloads[key] = event
+            candidates.setdefault(
+                key,
+                RecallCandidate(
+                    id=event.event_id,
+                    type="event",
+                    text=event.semantic_text,
+                    timestamp=event.timestamp,
+                    similarity=0.0,
+                    importance=event.importance,
+                    pinned=True,
+                ),
+            ).pinned = True
+        for fact in active_facts:
+            if not fact.get("pinned"):
+                continue
+            fact_id = str(fact.get("fact_id", ""))
+            if not fact_id:
+                continue
+            key = ("fact", fact_id)
+            payloads[key] = fact
+            candidates[key] = RecallCandidate(
+                id=fact_id,
+                type="fact",
+                text=str(fact.get("text", "")),
+                timestamp=normalize_timestamp(
+                    fact.get("updated_at") or fact.get("created_at") or now_local()
+                ),
+                similarity=0.0,
+                importance=0.5,
+                pinned=True,
+            )
+
+        stale_ids = [
+            memory_id
+            for memory_type, memory_id in raw_by_key
+            if (memory_type, memory_id) not in payloads
+        ]
+        if stale_ids:
+            await _run_blocking(delete_event_ids, stale_ids)
+
+        if not candidates:
             return SemanticSearchResult(
                 success=False,
                 text=(
@@ -306,46 +545,19 @@ async def _run_semantic(
                 top_k=top_k,
                 index_status=index_status,
                 error_code="no_semantic_match",
-                matches=[],
             )
 
-        matched_ids = [match["event_id"] for match in raw_matches]
-        matched_events = await _fetch_events_by_ids(matched_ids)
-        if not matched_events:
-            await _run_blocking(delete_event_ids, matched_ids)
-            return SemanticSearchResult(
-                success=False,
-                text=(
-                    "I found semantic matches, but I couldn't recover the full records."
-                    if synthesize
-                    else ""
-                ),
-                query=query,
-                match_count=0,
-                top_k=top_k,
-                index_status=index_status,
-                error_code="stale_vector_matches",
-                matches=[],
-            )
-
-        events_by_id = {event.event_id: event for event in matched_events}
-        stale_ids = [event_id for event_id in matched_ids if event_id not in events_by_id]
-        if stale_ids:
-            await _run_blocking(delete_event_ids, stale_ids)
-
-        ordered_events = [
-            events_by_id[event_id] for event_id in matched_ids if event_id in events_by_id
-        ]
-        answer_text = (
-            await _summarize_matches(query, ordered_events) if synthesize else ""
+        pack = pack_recall(
+            list(candidates.values()),
+            token_budget=settings.recall_token_budget,
+            half_life_days=settings.recall_half_life_days,
+            now=now_local(),
         )
-        raw_matches_by_id = {
-            raw_match["event_id"]: raw_match for raw_match in raw_matches
-        }
         matches = [
-            _match_from_event(event, raw_matches_by_id[event.event_id]["distance"])
-            for event in ordered_events
+            _match_from_packed(item, payloads[(item.type, item.id)])
+            for item in pack.included
         ]
+        answer_text = await _summarize_matches(query, matches) if synthesize else ""
         return SemanticSearchResult(
             success=True,
             text=answer_text,
@@ -354,6 +566,7 @@ async def _run_semantic(
             top_k=top_k,
             index_status=index_status,
             matches=matches,
+            recall_debug=_recall_debug(pack),
         )
     except Exception as exc:
         logger.exception("Semantic %s failed.", "search" if synthesize else "retrieval")

@@ -20,8 +20,7 @@ try:
     from .llm.client import invoke_structured, invoke_text
     from .media_paths import to_url_path
     from .object_detector import run_object_query
-    from .prompt_budget import compact_json_records, truncate_text
-    from .profile_memory import render_profile_block
+    from .profile_memory import render_profile_block, render_unpinned_profile_block
     from .semantic_search import SemanticSearchResult, run_semantic_retrieval
     from .time_agent import TimeWindowContext, get_time_window_context, run_time_query
 except ImportError:
@@ -34,8 +33,7 @@ except ImportError:
     from llm.client import invoke_structured, invoke_text
     from media_paths import to_url_path
     from object_detector import run_object_query
-    from prompt_budget import compact_json_records, truncate_text
-    from profile_memory import render_profile_block
+    from profile_memory import render_profile_block, render_unpinned_profile_block
     from semantic_search import SemanticSearchResult, run_semantic_retrieval
     from time_agent import TimeWindowContext, get_time_window_context, run_time_query
 
@@ -107,10 +105,6 @@ _TIME_REFERENCE_TERMS = (
     "this afternoon",
     "this evening",
 )
-SEMANTIC_JUDGE_BUDGET_CHARS = 14000
-SEMANTIC_ANSWER_BUDGET_CHARS = 20000
-
-
 def _build_activity_response(text: str, data: dict[str, Any]) -> JeevesResponse:
     return JeevesResponse(
         response_type="activity",
@@ -242,16 +236,17 @@ def _semantic_prompt_matches(result: SemanticSearchResult) -> list[dict[str, Any
         matches.append(
             {
                 "event_id": match.event_id,
+                "memory_type": match.memory_type,
                 "score": match.score,
+                "final_score": match.final_score,
+                "pinned": match.pinned,
                 "timestamp": match.timestamp,
                 "room_name": match.room_name,
                 "transcript_length": match.transcript_length,
-                "audio_transcript": truncate_text(match.audio_transcript, 700),
-                "video_description": truncate_text(match.video_description, 700),
-                "semantic_text": truncate_text(match.semantic_text, 900),
+                "semantic_text": match.semantic_text,
             }
         )
-    return compact_json_records(matches, max_chars=SEMANTIC_JUDGE_BUDGET_CHARS)
+    return matches
 
 
 def _semantic_answer_matches(result: SemanticSearchResult) -> list[dict[str, Any]]:
@@ -259,14 +254,14 @@ def _semantic_answer_matches(result: SemanticSearchResult) -> list[dict[str, Any
     for match in result.matches:
         matches.append(
             {
+                "id": match.event_id,
+                "memory_type": match.memory_type,
                 "timestamp": match.timestamp,
                 "room_name": match.room_name,
-                "audio_transcript": truncate_text(match.audio_transcript, 1000),
-                "video_description": truncate_text(match.video_description, 1000),
-                "semantic_text": truncate_text(match.semantic_text, 1200),
+                "semantic_text": match.semantic_text,
             }
         )
-    return compact_json_records(matches, max_chars=SEMANTIC_ANSWER_BUDGET_CHARS)
+    return matches
 
 
 async def _judge_semantic_retrieval(
@@ -302,7 +297,8 @@ async def _judge_semantic_retrieval(
             "Choose insufficient_evidence when the supplied evidence is too weak to "
             "support any grounded answer. "
             "Only provide anchor_event_id when selecting use_semantic_plus_time_window "
-            "and only if that event id appears in the supplied evidence."
+            "and only if that id appears in event-type supplied evidence. Summaries "
+            "and profile facts cannot be time-window anchors."
         ),
         model_id=registry.synthesis,
         structured_output_prompt=(
@@ -343,7 +339,7 @@ async def _synthesize_semantic_answer(
             ],
         }
 
-    profile_block = await render_profile_block()
+    profile_block = await render_unpinned_profile_block()
     system_prompt = with_patient_answer_context(
         "You are Jeeves, a grounded memory assistant for a dementia-support "
         "system. Synthesize a concise answer using only the supplied evidence "
@@ -390,6 +386,7 @@ async def _handle_semantic_query(query: str) -> JeevesResponse:
         "fallback_used": False,
         "anchor_event_id": decision.anchor_event_id,
         "anchor_timestamp": None,
+        "recall_debug": semantic_result.recall_debug.model_dump(mode="json"),
     }
 
     if decision.decision == "use_direct_time_reasoning":
@@ -420,25 +417,25 @@ async def _handle_semantic_query(query: str) -> JeevesResponse:
                 match
                 for match in semantic_result.matches
                 if match.event_id == decision.anchor_event_id
+                and match.memory_type == "event"
             ),
-            semantic_result.matches[0] if semantic_result.matches else None,
+            next(
+                (match for match in semantic_result.matches if match.memory_type == "event"),
+                None,
+            ),
         )
         if anchor_match is None:
-            response_data["judge_decision"]["decision"] = "insufficient_evidence"
-            return _build_activity_response(
-                "I couldn't find enough reliable evidence to ground that memory.",
-                response_data,
+            response_data["judge_decision"]["decision"] = "use_semantic_only"
+        else:
+            response_data["anchor_event_id"] = anchor_match.event_id
+            response_data["anchor_timestamp"] = anchor_match.timestamp
+            time_window = await get_time_window_context(
+                anchor_match.timestamp,
+                query=query,
+                room_name=anchor_match.room_name,
             )
-
-        response_data["anchor_event_id"] = anchor_match.event_id
-        response_data["anchor_timestamp"] = anchor_match.timestamp
-        time_window = await get_time_window_context(
-            anchor_match.timestamp,
-            query=query,
-            room_name=anchor_match.room_name,
-        )
-        response_data["time_window"] = time_window.model_dump(mode="json")
-        response_data["fallback_used"] = True
+            response_data["time_window"] = time_window.model_dump(mode="json")
+            response_data["fallback_used"] = True
 
     final_text = await _synthesize_semantic_answer(
         query,

@@ -74,6 +74,11 @@ def get_reminders_collection():
     return get_mongo_client().dementia_assistance.reminders
 
 
+def get_memory_summaries_collection():
+    """Return day-level consolidated memory summaries."""
+    return get_mongo_client().dementia_assistance.memory_summaries
+
+
 async def ensure_events_indexes() -> None:
     """Create MongoDB indexes used by ingestion and retrieval paths."""
 
@@ -85,6 +90,28 @@ async def ensure_events_indexes() -> None:
     )
     await collection.create_index([("event_id", 1)], name="event_id_1")
     await collection.create_index([("video_path", 1)], name="video_path_1")
+    await collection.create_index(
+        [
+            ("lifecycle_status", 1),
+            ("pinned", 1),
+            ("importance", 1),
+            ("timestamp", 1),
+        ],
+        name="lifecycle_status_1_pinned_1_importance_1_timestamp_1",
+    )
+
+
+async def ensure_memory_lifecycle_indexes() -> None:
+    """Create indexes used by deterministic day-level consolidation."""
+
+    summaries = get_memory_summaries_collection()
+    await summaries.create_index(
+        [("summary_id", 1)], name="summary_id_1", unique=True
+    )
+    await summaries.create_index(
+        [("date", -1), ("room_number", 1)],
+        name="date_-1_room_number_1",
+    )
 
 
 async def ensure_alert_indexes() -> None:

@@ -387,10 +387,10 @@ function handleJeevesResponse(data) {
     // data matches the JeevesResponse model from api.py
     // { response_type: str, text: str, image_path: str | null, data: obj | null }
     
-    addMessage(data.text, 'bot', data.image_path);
+    addMessage(data.text, 'bot', data.image_path, data.data?.recall_debug || null);
 }
 
-function addMessage(text, sender, imagePath = null) {
+function addMessage(text, sender, imagePath = null, recallDebug = null) {
     const messageDiv = document.createElement('div');
     messageDiv.classList.add('message', sender);
 
@@ -409,9 +409,62 @@ function addMessage(text, sender, imagePath = null) {
         messageDiv.appendChild(img);
     }
 
+    if (sender === 'bot' && recallDebug) {
+        renderRecallDebug(messageDiv, recallDebug);
+    }
+
     chatContainer.appendChild(messageDiv);
     scrollToBottom();
     return messageDiv.id = 'msg-' + Date.now();
+}
+
+function renderRecallDebug(messageDiv, recallDebug) {
+    const memories = Array.isArray(recallDebug.memories) ? recallDebug.memories : [];
+    const considered = Number.isFinite(Number(recallDebug.considered_count))
+        ? Number(recallDebug.considered_count)
+        : memories.length;
+    const packed = Number.isFinite(Number(recallDebug.packed_count))
+        ? Number(recallDebug.packed_count)
+        : memories.length;
+
+    const details = document.createElement('details');
+    details.className = 'memory-used';
+    const summary = document.createElement('summary');
+    summary.textContent = `\u{1F9E0} Memory used (${packed} of ${considered} considered)`;
+    details.appendChild(summary);
+
+    const list = document.createElement('div');
+    list.className = 'memory-used-list';
+    const icons = { event: '\u{1F4F7}', summary: '\u{1F5D3}', fact: '\u{1F4CC}' };
+    memories.forEach((memory) => {
+        const row = document.createElement('div');
+        row.className = 'memory-used-row';
+
+        const label = document.createElement('span');
+        label.className = 'memory-used-label';
+        const type = ['event', 'summary', 'fact'].includes(memory.type) ? memory.type : 'memory';
+        const parsedDate = new Date(memory.timestamp);
+        const dateText = Number.isNaN(parsedDate.getTime())
+            ? 'Unknown date'
+            : parsedDate.toLocaleDateString();
+        label.textContent = `${icons[type] || '\u{1F9E0}'} ${type} \u00B7 ${dateText}${memory.pinned ? ' \u00B7 pinned' : ''}`;
+
+        const score = Number(memory.final_score);
+        const scoreText = document.createElement('span');
+        scoreText.className = 'memory-used-score';
+        scoreText.textContent = Number.isFinite(score) ? score.toFixed(3) : '0.000';
+
+        const scoreBar = document.createElement('span');
+        scoreBar.className = 'memory-used-score-bar';
+        const fill = document.createElement('span');
+        fill.style.width = `${Math.max(0, Math.min(100, (Number.isFinite(score) ? score : 0) * 100))}%`;
+        scoreBar.appendChild(fill);
+
+        row.append(label, scoreText, scoreBar);
+        list.appendChild(row);
+    });
+    details.appendChild(list);
+    messageDiv.appendChild(details);
 }
 
 function addLoadingIndicator() {

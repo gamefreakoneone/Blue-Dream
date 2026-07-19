@@ -64,6 +64,27 @@ def _env_optional_int(name: str) -> Optional[int]:
     return parsed
 
 
+def _env_positive_int(name: str, default: int) -> int:
+    value = int(os.getenv(name, str(default)))
+    if value <= 0:
+        raise RuntimeError(f"{name} must be greater than zero, got {value}.")
+    return value
+
+
+def _env_positive_float(name: str, default: float) -> float:
+    value = float(os.getenv(name, str(default)))
+    if value <= 0:
+        raise RuntimeError(f"{name} must be greater than zero, got {value}.")
+    return value
+
+
+def _env_unit_float(name: str, default: float) -> float:
+    value = float(os.getenv(name, str(default)))
+    if not 0.0 <= value <= 1.0:
+        raise RuntimeError(f"{name} must be between 0 and 1, got {value}.")
+    return value
+
+
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -135,6 +156,12 @@ class ProviderSettings(BaseModel):
     mongodb_uri: str = "mongodb://localhost:27017"
     chroma_persist_dir: str = Field(default_factory=_default_chroma_persist_dir)
     semantic_search_top_k: int = 5
+    consolidation_age_days: int = 2
+    consolidation_importance_max: float = 0.5
+    consolidation_min_events: int = 3
+    consolidate_on_startup: bool = False
+    recall_half_life_days: float = 14.0
+    recall_token_budget: int = 2000
     safety_agent_enabled: bool = True
     safety_alert_min_severity: str = "medium"
     firebase_project_id: Optional[str] = None
@@ -221,6 +248,16 @@ def get_provider_settings() -> ProviderSettings:
         )
         or _default_chroma_persist_dir(),
         semantic_search_top_k=int(os.getenv("SEMANTIC_SEARCH_TOP_K", "5")),
+        consolidation_age_days=_env_positive_int("CONSOLIDATION_AGE_DAYS", 2),
+        consolidation_importance_max=_env_unit_float(
+            "CONSOLIDATION_IMPORTANCE_MAX", 0.5
+        ),
+        consolidation_min_events=_env_positive_int(
+            "CONSOLIDATION_MIN_EVENTS", 3
+        ),
+        consolidate_on_startup=_env_bool("CONSOLIDATE_ON_STARTUP", False),
+        recall_half_life_days=_env_positive_float("RECALL_HALF_LIFE_DAYS", 14.0),
+        recall_token_budget=_env_positive_int("RECALL_TOKEN_BUDGET", 2000),
         safety_agent_enabled=_env_bool("SAFETY_AGENT_ENABLED", True),
         safety_alert_min_severity=os.getenv(
             "SAFETY_ALERT_MIN_SEVERITY", "medium"

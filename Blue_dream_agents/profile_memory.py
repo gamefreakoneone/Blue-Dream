@@ -123,8 +123,10 @@ class ProfileMemoryService:
         )
         return [serialize_profile_fact(document) async for document in cursor]
 
-    async def render_profile_block(self) -> str:
+    async def render_profile_block(self, *, include_pinned: bool = True) -> str:
         facts = await self.get_active_facts()
+        if not include_pinned:
+            facts = [fact for fact in facts if not fact.get("pinned")]
         if not facts:
             return ""
         lines = ["What you know about the patient:"]
@@ -360,6 +362,10 @@ async def get_active_facts() -> list[dict[str, Any]]:
 
 async def render_profile_block() -> str:
     return await _default_service.render_profile_block()
+
+
+async def render_unpinned_profile_block() -> str:
+    return await _default_service.render_profile_block(include_pinned=False)
 
 
 async def pin_fact(fact_id: str) -> bool:

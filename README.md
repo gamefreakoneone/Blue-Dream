@@ -177,6 +177,14 @@ OSS_PRESIGN_TTL_SECONDS=3600
 CHROMA_PERSIST_DIR=
 SEMANTIC_SEARCH_TOP_K=5
 
+# Memory lifecycle and context-budgeted recall
+CONSOLIDATION_AGE_DAYS=2
+CONSOLIDATION_IMPORTANCE_MAX=0.5
+CONSOLIDATION_MIN_EVENTS=3
+CONSOLIDATE_ON_STARTUP=false
+RECALL_HALF_LIFE_DAYS=14
+RECALL_TOKEN_BUDGET=2000
+
 # Durable working-memory limits
 CONVERSATION_MAX_TURNS=12
 PROFILE_MAX_ACTIVE_FACTS=50
@@ -231,6 +239,18 @@ EXPO_PUBLIC_API_BASE_URL=http://<your-lan-ip>:8000
 Metro reads this at startup, so restart `npx expo start` after changing it.
 
 See `.env.example` for the complete configuration surface, including OSS video-bridge, safety, Firebase, and geofence settings.
+
+### Memory lifecycle
+
+Memoria practices memory hygiene so the patient never has to. New camera events
+receive an importance score, safety-warning events are pinned, and old mundane
+events can be consolidated by day and room with `POST /memory/consolidate`.
+Consolidation removes source events only from semantic recall and marks them in
+MongoDB; patient memories are consolidated and archived, never erased. Pinning
+an event through `POST /memory/events/{event_id}/pin` keeps it individually
+recallable, while `/unpin` makes it eligible for later consolidation. Semantic
+answers rank evidence by relevance, recency, and importance within the configured
+recall budget and expose the packed evidence in the web UI's “Memory used” panel.
 
 ## Running the System
 

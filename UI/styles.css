@@ -563,6 +563,61 @@ header {
     transform: scale(0.95);
 }
 
+.memory-used {
+    width: min(100%, 460px);
+    margin-top: 8px;
+    color: var(--secondary-text);
+    font-size: 12px;
+}
+
+.memory-used summary {
+    cursor: pointer;
+    font-weight: 700;
+    padding: 6px 10px;
+    user-select: none;
+}
+
+.memory-used-list {
+    display: grid;
+    gap: 7px;
+    padding: 8px 10px 10px;
+    border: 1px solid rgba(16, 185, 129, 0.12);
+    border-radius: 12px;
+    background: rgba(240, 253, 244, 0.7);
+}
+
+.memory-used-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 3px 10px;
+    align-items: center;
+}
+
+.memory-used-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.memory-used-score {
+    font-variant-numeric: tabular-nums;
+}
+
+.memory-used-score-bar {
+    grid-column: 1 / -1;
+    height: 4px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(100, 116, 139, 0.15);
+}
+
+.memory-used-score-bar > span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--primary-color);
+}
+
 @media (max-width: 480px) {
     header {
         padding: 18px 20px;

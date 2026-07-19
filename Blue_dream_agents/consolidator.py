@@ -5,11 +5,15 @@ import os
 import re
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from .audio_transcribe import Audio_agent
 from .db_client import ensure_events_indexes, get_events_collection
 from .memory_schema import memory_event_from_mongo, memory_event_to_mongo, new_memory_event
 from .media_paths import normalize_stored_path, to_fs_path, to_stored_path
 from .llm.settings import get_provider_settings
+from .llm.client import invoke_structured
+from .llm.model_registry import get_model_registry
 from .oss_media import upload_video
 from .semantic_search import index_memory_event
 from .safety_agent import assess_event_safety, empty_safety_assessment
@@ -32,6 +36,57 @@ from .video_agent import describe_video, video_results
 
 
 logger = logging.getLogger(__name__)
+
+
+class ImportanceAssessment(BaseModel):
+    importance: float = Field(ge=0.0, le=1.0)
+    importance_reason: str
+
+
+async def assess_event_importance(event) -> ImportanceAssessment:
+    """Score one event without ever allowing scoring to block persistence."""
+
+    try:
+        return await invoke_structured(
+            prompt={
+                "semantic_text": event.semantic_text,
+                "danger_candidate": event.danger_candidate,
+                "observed_hazards": event.observed_hazards,
+                "safety_assessment": event.safety_assessment,
+            },
+            output_model=ImportanceAssessment,
+            system_prompt=(
+                "Practice memory hygiene so the patient never has to. Score this "
+                "home memory event from 0.0 to 1.0. Safety hazards, falls, medical "
+                "events, and meaningful social interactions are high importance "
+                "(at least 0.7); ordinary activity is medium (about 0.4 to 0.6); "
+                "idle pass-through activity is low (at most 0.3). Memories are "
+                "consolidated and archived, never erased. Give one short factual reason."
+            ),
+            model_id=get_model_registry().router,
+            structured_output_prompt=(
+                "Return importance between 0.0 and 1.0 and importance_reason."
+            ),
+            max_tokens=200,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Importance scoring failed for event %s; using neutral default: %s",
+            event.event_id,
+            exc,
+        )
+        return ImportanceAssessment(
+            importance=0.5,
+            importance_reason="scoring unavailable",
+        )
+
+
+async def apply_event_lifecycle(event, safety_assessment) -> None:
+    event.safety_assessment = safety_assessment.model_dump(mode="json")
+    event.pinned = bool(safety_assessment.warning_needed)
+    importance = await assess_event_importance(event)
+    event.importance = importance.importance
+    event.importance_reason = importance.importance_reason.strip()
 
 
 def _path_variants(path: str) -> list[Any]:
@@ -177,7 +232,7 @@ async def consolidator_agent(
         safety_assessment = empty_safety_assessment(
             f"Safety assessment failed: {exc}"
         )
-    event.safety_assessment = safety_assessment.model_dump(mode="json")
+    await apply_event_lifecycle(event, safety_assessment)
 
     document = memory_event_to_mongo(event)
     result = await collection.insert_one(document)
