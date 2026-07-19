@@ -71,7 +71,11 @@ self.addEventListener("notificationclick", (event) => {
         });
         return;
       }
-      await self.clients.openWindow(target);
+      const opened = await self.clients.openWindow(target);
+      opened?.postMessage({
+        type: "notification-opened",
+        message_id: event.notification.data?.message_id || null,
+      });
     })(),
   );
 });

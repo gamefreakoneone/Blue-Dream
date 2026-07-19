@@ -37,13 +37,13 @@ export const api = {
     apiRequest("/reminders", { method: "POST", body: JSON.stringify(value) }),
   completeReminder: (reminderId) =>
     apiRequest(`/reminders/${encodeURIComponent(reminderId)}/done`, { method: "POST" }),
-  listAlerts: () => apiRequest("/alerts/open?target_role=patient"),
+  listAlerts: () => apiRequest("/alerts/patient?status=open"),
   acknowledgeAlert: (alertId, action = "ok") =>
     apiRequest(`/alerts/${encodeURIComponent(alertId)}/ack`, {
       method: "POST",
       body: JSON.stringify({ action }),
     }),
-  geofenceSettings: () => apiRequest("/geofence/settings"),
+  geofenceSettings: () => apiRequest("/geofence/current"),
   listFacts: () => apiRequest("/memory/profile"),
   pinFact: (factId) =>
     apiRequest(`/memory/profile/${encodeURIComponent(factId)}/pin`, { method: "POST" }),
@@ -56,3 +56,14 @@ export const api = {
   vapidKey: () => apiRequest("/push/vapid-public-key"),
   testPush: () => apiRequest("/push/test", { method: "POST" }),
 };
+
+export function mediaUrl(value) {
+  if (!value) return null;
+  const normalized = String(value).replaceAll("\\", "/");
+  if (normalized.startsWith("/")) return encodeURI(normalized);
+  const storage = normalized.toLowerCase().indexOf("storage/");
+  if (storage >= 0) return encodeURI(`/${normalized.slice(storage).toLowerCase().startsWith("storage/") ? "storage/" + normalized.slice(storage + 8) : normalized.slice(storage)}`);
+  const capture = normalized.toLowerCase().indexOf("capture/");
+  if (capture >= 0) return encodeURI(`/capture/${normalized.slice(capture + 8)}`);
+  return encodeURI(normalized);
+}
