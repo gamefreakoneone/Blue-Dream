@@ -20,7 +20,7 @@ Memoria is designed around one practical idea: use local, grounded AI to help pa
 - **Durable patient memory**: Conversation context, stable profile facts, and patient-created reminders survive backend restarts in MongoDB without entering the monitoring-evidence index.
 - **Proactive patient guidance**: Safety warnings, morning reports, and time- or event-triggered reminders appear as agent-initiated web chat turns.
 - **Safety reasoning prototype**: Factual observations from room events can be judged for patient-actionable risks, such as unattended cooking or ambiguous hazards.
-- **Patient web UI**: FastAPI serves a lightweight Memoria chat interface at `http://localhost:8000`.
+- **Patient web UI**: FastAPI serves the installable React PWA at `http://localhost:8000` after its production bundle has been built.
 - **Expo mobile app**: The React Native app supports chat, New Chat, alert list/detail screens, acknowledgement actions, geofence guidance, deep links, and notification scaffolding.
 - **Fall detection**: A custom YOLO model watches live camera feeds and can notify a caregiver or emergency contact through the alert path.
 
@@ -87,7 +87,7 @@ At a high level:
 - MongoDB running locally unless `MONGODB_URI` overrides it
 - One or more webcams/cameras for live capture
 - PyTorch/Torchvision installed separately before `requirements.txt`
-- Node.js and npm for the mobile app
+- Node.js and npm for the patient web app
 - Required keys depend on the selected providers. The default Qwen profile uses `DASHSCOPE_API_KEY` (or `QWEN_APIKEY` fallback); Gemini features use `GEMINI_API_KEY`.
 - Optional keys/config:
   - Firebase service account settings for remote push delivery
@@ -95,6 +95,8 @@ At a high level:
   - `OPENAI_API_KEY` for the offline-tested OpenAI profile or transcription fallback
 
 ## Setup
+
+> **Important — the web UI build is intentionally not committed.** A fresh clone can run the API endpoints, but `/` has no patient UI until you run `cd UI`, `npm install`, and `npm run build`. When the bundle is missing, the API logs: `UI build not found at <path>; the API will run without the web UI. Run: cd UI && npm run build`.
 
 ### 1. Clone the repository
 
@@ -277,6 +279,17 @@ for the leaving-the-house demo beat.
 ## Running the System
 
 ### 1. Start the backend API and web UI
+
+Build the patient PWA after cloning and whenever UI source changes:
+
+```bash
+cd UI
+npm install
+npm run build
+cd ..
+```
+
+`UI/dist/` is generated and gitignored. Without it, the backend still boots API-only and prints the build-required warning above.
 
 ```powershell
 uvicorn Blue_dream_agents.api:app --reload

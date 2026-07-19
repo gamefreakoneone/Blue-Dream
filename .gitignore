@@ -22,6 +22,8 @@ venv/
 env/
 
 # Node and Expo generated output
+UI/node_modules/
+UI/dist/
 Mobile/node_modules/
 Mobile/.expo/
 Mobile/dist/

@@ -1,87 +1,17 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Memoria - Personal Assistant</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css">
-    <!-- FontAwesome for icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-</head>
-<body>
-    <div class="app-container">
-        <header>
-            <div class="logo">
-                <img src="/slime_logo.png" alt="Memoria Logo" class="logo-slime">
-                <h1>Memoria</h1>
-            </div>
-            <div class="header-actions">
-                <button type="button" id="new-chat-btn" title="New chat" aria-label="Start a new chat">
-                    <i class="fa-solid fa-plus"></i>
-                    <span>New Chat</span>
-                </button>
-                <div class="status-indicator online"></div>
-            </div>
-        </header>
-
-        <section class="emergency-panel" aria-labelledby="emergency-title">
-            <div class="emergency-header">
-                <div>
-                    <p class="eyebrow">Web emergency workflow demo</p>
-                    <h2 id="emergency-title">Safe-zone alert</h2>
-                </div>
-                <button type="button" id="simulate-exit-btn">
-                    <i class="fa-solid fa-location-arrow"></i>
-                    <span>Simulate safe-zone exit</span>
-                </button>
-            </div>
-
-            <div class="emergency-grid">
-                <div class="emergency-block">
-                    <div class="block-label">Home geofence</div>
-                    <div id="geofence-status" class="status-card muted">Loading geofence...</div>
-                </div>
-
-                <div class="emergency-block">
-                    <div class="block-label">Open patient alerts</div>
-                    <div id="alert-list" class="alert-list">Loading alerts...</div>
-                </div>
-            </div>
-
-            <div id="alert-detail" class="alert-detail empty">
-                <div class="empty-state">
-                    <i class="fa-solid fa-shield-heart"></i>
-                    <div>
-                        <strong>No alert selected</strong>
-                        <p>Create a safe-zone exit alert to demonstrate the emergency flow.</p>
-                    </div>
-                </div>
-            </div>
-
-            <div id="emergency-error" class="emergency-error" role="status" aria-live="polite"></div>
-        </section>
-
-        <main id="chat-container">
-            <div class="message system">
-                <div class="bubble">
-                    <p>Hello, I am Memoria. How can I assist you today?</p>
-                </div>
-            </div>
-        </main>
-
-        <div class="input-area">
-            <form id="chat-form">
-                <input type="text" id="user-input" placeholder="Ask Memoria anything..." autocomplete="off">
-                <button type="submit" id="send-btn">
-                    <i class="fa-solid fa-paper-plane"></i>
-                </button>
-            </form>
-        </div>
-    </div>
-
-    <script src="script.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f6faf8" />
+    <meta name="description" content="Memoria — a gentle memory and safety companion." />
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <title>Memoria</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
 </html>
