@@ -50,9 +50,9 @@ Full-video Qwen analysis uses a private Alibaba OSS presigned URL because inline
 
 ## Architecture
 
-![Project Memoria Qwen Cloud Architecture](Demo/memoria-architecture-qwen.png)
+![Project Memoria Architecture](Demo/Project%20memoria%203.png)
 
-For the full component-level view — all five layers, the agents in each, and the MongoDB collections — see the [detailed architecture diagram](Demo/memoria-architecture-qwen-detailed.png).
+The diagram traces the full flow: cameras and microphone feed live input into YOLO fall detection, which branches to the alert service (falls) or the recording path (activity). Recorded video is bridged to the Qwen vision model through OSS for description while its paired audio is transcribed, and the consolidator agent fuses both into a canonical memory event with ranked importance. Events land in MongoDB (the source of truth), which is embedded into ChromaDB for semantic recall and swept by the memory cleanup agent. On the query side, the Memoria router (Qwen 3.7 Plus) fans user questions out to the object-retrieval, semantic, and time agents, which read from the memory layer; the proactive agent pushes agent-initiated turns back to the patient.
 
 At a high level:
 
