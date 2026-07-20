@@ -5,6 +5,7 @@ import concurrent.futures
 import datetime
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -64,16 +65,31 @@ SEVERITY_RANK = {
     "critical": 4,
 }
 
-KITCHEN_HAZARD_TERMS = (
-    "stove",
-    "burner",
-    "pot",
-    "pan",
-    "smoke",
-    "flame",
-    "fire",
-    "kettle",
-    "boiling",
+LEGACY_HAZARD_TARGET_ALIASES = (
+    ("knife", "knife"),
+    ("blade", "knife"),
+    ("scissors", "scissors"),
+    ("stove", "stove"),
+    ("burner", "burner"),
+    ("pot", "pot"),
+    ("pan", "pan"),
+    ("smoke", "smoke"),
+    ("flame", "flame"),
+    ("fire", "flame"),
+    ("kettle", "kettle"),
+    ("boiling", "pot"),
+    ("electrical cord", "electrical cord"),
+    ("power cord", "power cord"),
+    ("spill", "spill"),
+    ("medication bottle", "medication bottle"),
+    ("pill bottle", "pill bottle"),
+    ("chemical container", "chemical container"),
+)
+NULL_HAZARD_TARGETS = frozenset(
+    {"none", "null", "n/a", "na", "unknown", "not applicable", "no visible object"}
+)
+NON_PATIENT_SAFETY_HAZARD_TYPES = frozenset(
+    {"fall", "possible_fall", "patient_fall", "geofence_exit", "geofence_enter"}
 )
 
 _alert_indexes_ready = False
@@ -98,6 +114,18 @@ def _severity_allows_alert(severity: str, min_severity: str) -> bool:
     return SEVERITY_RANK.get(severity, 0) >= SEVERITY_RANK.get(min_severity, 2)
 
 
+def is_patient_actionable_safety_assessment(
+    assessment: SafetyAssessment, min_severity: str
+) -> bool:
+    """Apply the production patient-alert gate without performing side effects."""
+
+    if assessment.hazard_type.strip().casefold() in NON_PATIENT_SAFETY_HAZARD_TYPES:
+        return False
+    return assessment.warning_needed and _severity_allows_alert(
+        assessment.severity, min_severity
+    )
+
+
 def _json_safe(value: Any) -> Any:
     if isinstance(value, ObjectId):
         return str(value)
@@ -119,20 +147,67 @@ def serialize_alert(doc: dict[str, Any]) -> dict[str, Any]:
     return serialized
 
 
-def _combined_hazard_text(event: MemoryEvent, assessment: SafetyAssessment) -> str:
+def _joined_text(parts: list[str]) -> str:
+    return " ".join(part.strip() for part in parts if part and part.strip()).casefold()
+
+
+def _hazard_specific_text(event: MemoryEvent, assessment: SafetyAssessment) -> str:
     parts = [
         assessment.hazard_type,
         assessment.recommended_action,
         assessment.patient_message,
         assessment.detailed_explanation,
         assessment.reason,
-        event.video_description,
-        event.scene_end_state,
-        " ".join(event.room_objects),
         " ".join(event.observed_hazards),
-        " ".join(event.uncertainties),
     ]
-    return " ".join(part for part in parts if part).lower()
+    return _joined_text(parts)
+
+
+def _combined_hazard_text(event: MemoryEvent, assessment: SafetyAssessment) -> str:
+    return _joined_text(
+        [
+            _hazard_specific_text(event, assessment),
+            event.scene_end_state,
+            event.video_description,
+        ]
+    )
+
+
+def _normalize_highlight_target(value: str | None) -> Optional[str]:
+    normalized = " ".join(str(value or "").split()).strip(" \t\r\n.,;:")
+    if not normalized or normalized.casefold() in NULL_HAZARD_TARGETS:
+        return None
+    return normalized
+
+
+def _contains_whole_phrase(text: str, phrase: str) -> bool:
+    words = re.findall(r"\w+", phrase.casefold())
+    if not words:
+        return False
+    pattern = r"(?<!\w)" + r"\s+".join(re.escape(word) for word in words) + r"(?!\w)"
+    return re.search(pattern, text.casefold()) is not None
+
+
+def _legacy_alias_target(text: str) -> Optional[str]:
+    for phrase, target in LEGACY_HAZARD_TARGET_ALIASES:
+        if _contains_whole_phrase(text, phrase):
+            return target
+    return None
+
+
+def _room_object_matches_text(room_object: str, text: str) -> bool:
+    if _contains_whole_phrase(text, room_object):
+        return True
+    words = re.findall(r"\w+", room_object.casefold())
+    return len(words) > 1 and len(words[-1]) >= 3 and _contains_whole_phrase(
+        text, words[-1]
+    )
+
+
+def _object_matches_alias(room_object: str, alias_target: str) -> bool:
+    return _contains_whole_phrase(room_object, alias_target) or _contains_whole_phrase(
+        alias_target, room_object
+    )
 
 
 def choose_highlight_target(
@@ -140,26 +215,46 @@ def choose_highlight_target(
 ) -> Optional[str]:
     """Pick one visible hazard target to highlight in the alert detail image."""
 
-    text = _combined_hazard_text(event, assessment)
-    if not text:
-        return None
+    explicit_target = _normalize_highlight_target(assessment.hazard_object)
+    if explicit_target:
+        return explicit_target
 
-    for term in KITCHEN_HAZARD_TERMS:
-        if term in text:
-            if term == "boiling":
-                return "pot"
-            if term == "fire":
-                return "flame"
-            return term
+    specific_text = _hazard_specific_text(event, assessment)
+    combined_text = _combined_hazard_text(event, assessment)
+    alias_target = _legacy_alias_target(combined_text)
 
-    hazard_type = assessment.hazard_type.lower()
-    if "cooking" in hazard_type or "stove" in hazard_type:
-        return "stove"
-    if "smoke" in hazard_type:
-        return "smoke"
-    if "flame" in hazard_type or "fire" in hazard_type:
-        return "flame"
-    return None
+    matches: list[str] = []
+    seen: set[str] = set()
+    for value in event.room_objects:
+        candidate = _normalize_highlight_target(value)
+        if not candidate or candidate.casefold() in seen:
+            continue
+        if _room_object_matches_text(candidate, specific_text):
+            seen.add(candidate.casefold())
+            matches.append(candidate)
+
+    if alias_target:
+        alias_matches = [
+            candidate
+            for candidate in matches
+            if _object_matches_alias(candidate, alias_target)
+        ]
+        if len(alias_matches) == 1:
+            return alias_matches[0]
+    elif len(matches) == 1:
+        return matches[0]
+
+    return alias_target
+
+
+def _alert_grounding_text(event: MemoryEvent, assessment: SafetyAssessment) -> str:
+    parts = [
+        assessment.detailed_explanation,
+        " ".join(event.observed_hazards),
+        event.scene_end_state,
+    ]
+    grounding_text = " ".join(part.strip() for part in parts if part and part.strip())
+    return grounding_text or assessment.reason or event.video_description
 
 
 async def build_alert_image_fields(
@@ -192,12 +287,7 @@ async def build_alert_image_fields(
             "highlight_status": "fallback_original",
         }
 
-    grounding_text = (
-        assessment.detailed_explanation
-        or assessment.reason
-        or event.scene_end_state
-        or event.video_description
-    )
+    grounding_text = _alert_grounding_text(event, assessment)
     try:
         highlighted_path = await highlight_object(
             image_path=str(original_fs_path),
@@ -339,9 +429,9 @@ async def create_alert_for_safety_assessment(
     event: MemoryEvent, assessment: SafetyAssessment
 ) -> Optional[dict[str, Any]]:
     settings = get_provider_settings()
-    if not assessment.warning_needed:
-        return None
-    if not _severity_allows_alert(assessment.severity, settings.safety_alert_min_severity):
+    if not is_patient_actionable_safety_assessment(
+        assessment, settings.safety_alert_min_severity
+    ):
         return None
 
     await initialize_alert_indexes()

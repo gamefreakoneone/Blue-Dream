@@ -2,7 +2,7 @@
 
 ## Goal
 
-Let the agent speak first. A trigger engine turns backend events into patient-facing messages that appear as agent-initiated chat turns in the web UI via polling — no push infrastructure. This unifies four product moments: hazard warnings ("please go back to the kitchen"), the morning report, due time reminders, and event-triggered reminders ("don't forget your water bottle" as the patient is seen leaving for their morning walk).
+Let the agent speak first. A trigger engine turns backend events into patient-facing messages that appear as agent-initiated chat turns in the web UI via polling — no push infrastructure. This unifies four product moments: room-agnostic environmental-hazard warnings, the morning report, due time reminders, and event-triggered reminders ("don't forget your water bottle" as the patient is seen leaving for their morning walk).
 
 ## Functional Requirements
 
@@ -17,6 +17,13 @@ Let the agent speak first. A trigger engine turns backend events into patient-fa
 2. **Morning report**: on the first ingested camera event of a calendar day (project timezone), compose a report from: yesterday's `memory_summaries` (or a fallback line if none), today's active reminders, and pinned safety facts. One LLM synthesis call renders it warm and short.
 3. **Time reminders**: due reminders (from 0006's `get_due_reminders`) become proactive messages; `daily` reminders roll forward on delivery.
 4. **Event-triggered reminders**: after each camera event is ingested, active event reminders (from 0006's `get_matchable_event_reminders`) are matched against it — Mongo pre-filter on room + local-time window + `valid_date`, then one structured LLM call judging whether the event description satisfies the reminder's `condition` (behind `EVENT_REMINDER_LLM_MATCH=true`; when disabled or on LLM failure, the room+window match alone fires — deterministic fallback). A match creates a `trigger_type="reminder"` proactive message; each reminder fires at most once per day (dedupe by `{reminder_id}_{local_date}`); dated reminders are marked `done` after firing, undated ones stay active and re-arm the next day. Known latency: the message lands after the recording ends and the video is processed (about a minute after the patient exits the frame) — same latency class as hazard alerts, acceptable for the leaving-the-house moment.
+
+### 2026-07-20 room-agnostic safety corrective amendment
+
+- Video analysis observes clear environmental hazards in the Bedroom and Living Room, including unsafe sharp objects, fire/gas/heat, exposed electrical risks, spills/trip obstacles, and open or spilled medication/chemicals. It evaluates unsafe state and context, not object presence alone.
+- `SafetyAssessment` adds backward-compatible `hazard_object: str = ""`, naming one concise visible object for actionable warnings. Falls remain caretaker-only and geofence behavior remains unchanged.
+- Alert highlighting uses `hazard_object`, then an unambiguous whole-word room-object match, then boundary-safe aliases. It must never infer `pot`, `pan`, or `flame` from substrings such as `spot`, `panicked`, `companion`, `expanded`, or `fireplace`.
+- `scripts/check_hazard_video.py` accepts a video, room, and optional final screenshot; it exercises the configured video/safety/spatial providers and reports whether the production gate would fire without writing MongoDB/Chroma or sending proactive/push messages.
 
 ### Delivery (web chat polling)
 
@@ -41,7 +48,7 @@ Let the agent speak first. A trigger engine turns backend events into patient-fa
 
 ## Acceptance Criteria
 
-- Kitchen-hazard demo: an ingested hazard event (safety alert stored) produces, within one poll cycle, an agent-initiated chat bubble with the warning text and highlighted image.
+- Bedroom-hazard demo: a clip where the patient cuts fruit, leaves a sharp knife on the bed, and exits produces an actionable warning whose image highlights the knife; ordinary supervised knife use alone does not alert.
 - Morning-report demo: the first event of a new day produces a report bubble citing yesterday's summary and today's reminders.
 - Reminder demo: a due time reminder appears as a bubble; a daily reminder reschedules itself.
 - Water-bottle demo: with an event reminder set for the living room morning window, ingesting a "person puts on shoes and leaves" clip inside the window produces the reminder bubble within one poll cycle; a same-room event outside the window fires nothing; a second matching event the same day fires nothing (dedupe).

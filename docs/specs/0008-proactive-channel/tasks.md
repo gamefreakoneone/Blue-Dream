@@ -32,3 +32,13 @@
 ## Wrap-Up
 
 - [x] Update `docs/FEATURE_STATUS.md` + `status.md` with evidence; commit.
+
+## 2026-07-20 Room-Agnostic Safety Corrective Amendment
+
+- [x] Generalize video observations and safety judgment to conservative environmental hazards in Bedroom and Living Room scenes.
+- [x] Add backward-compatible `SafetyAssessment.hazard_object` and boundary-safe highlight-target precedence.
+- [x] Preserve the severity threshold, patient alert/proactive failure isolation, Qwen→Gemini→original-image fallback, caretaker-only fall path, and geofence behavior.
+- [x] Add `scripts/check_hazard_video.py` dry-run CLI with final-frame extraction, canonical staging, JSON evidence, and exit codes 0/1/2/3.
+- [x] Add prompt, selector, image-builder, gate, and CLI regression tests.
+- [x] Update README, technical design, feature ledger, and corrective-amendment evidence.
+- [ ] User-supplied staged knife-on-bed video returns exit `0` and a visually correct knife highlight; intentionally pending until that media exists.

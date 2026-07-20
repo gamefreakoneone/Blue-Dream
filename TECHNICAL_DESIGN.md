@@ -7,7 +7,7 @@
 Memoria has five layers:
 
 1. **Capture** (`Capture/`) records room events on the local machine: YOLO person/fall detection, per-camera video + audio recording, final-frame screenshots, a processing queue.
-2. **Ingestion** (`Blue_dream_agents/consolidator.py`) turns a finished recording into a canonical `MemoryEvent`: video description + factual safety observations (vision model), audio transcript (ASR), importance score, safety judgment, MongoDB insert, semantic indexing.
+2. **Ingestion** (`Blue_dream_agents/consolidator.py`) turns a finished recording into a canonical `MemoryEvent`: video description + room-agnostic factual environmental-hazard observations (vision model), audio transcript (ASR), importance score, safety judgment, MongoDB insert, semantic indexing.
 3. **Memory stores**: MongoDB (`dementia_assistance`) is the single source of truth — `events`, `memory_summaries`, `conversation_sessions`, `profile_facts`, `reminders`, `safety_alerts`, `proactive_messages`, `push_subscriptions`. `memory_digests` is a date-keyed, rebuildable presentation cache derived from those authoritative records. ChromaDB is a rebuildable semantic index only.
 4. **Provider layer** (`Blue_dream_agents/llm/`) is one async client speaking the OpenAI chat-completions protocol to DashScope (Qwen), OpenAI, or local Ollama, selected by `LLM_PROVIDER`.
 5. **Interaction** (`Blue_dream_agents/api.py` + `UI/`) is a Vite + React installable patient PWA built to `UI/dist`. It serves chat, proactive turns, reminders, safety, memories, alerts, and static media; Web Push wakes the service worker when the app is closed. The former Expo `Mobile/` prototype was removed by spec 0013.
@@ -27,6 +27,12 @@ Memoria has five layers:
 ### `MemoryEvent` (MongoDB `events`)
 
 Canonical model in `Blue_dream_agents/memory_schema.py`. Existing fields (`event_id`, `timestamp`, `room_number`, `room_name`, `video_description`, `room_objects`, `audio_transcript`, `screenshot_path`, `video_path`, `audio_path`, `semantic_text`, safety fields) plus lifecycle fields added by spec 0007: `importance` (0–1), `importance_reason`, `pinned`, `lifecycle_status` (`active|consolidated`), `consolidated_into`; plus the optional `video_oss_key` added by spec 0005 (OSS object key of the uploaded video, absent on legacy documents). Legacy documents are normalized at read time — never bulk-migrated.
+
+### Safety assessment and hazard highlighting
+
+`SafetyAssessment` is a conservative, room-agnostic environmental-hazard decision. New assessments add the backward-compatible `hazard_object` string inside the existing `MemoryEvent.safety_assessment` dictionary; it is a concise visible object label, preferably copied from `room_objects`, and defaults to empty for legacy results. The patient alert gate remains `warning_needed=true` plus `severity >= SAFETY_ALERT_MIN_SEVERITY`. Falls and geofence events remain excluded from this patient gate and keep their dedicated behavior.
+
+Alert highlighting selects the structured `hazard_object` first, then an unambiguous whole-word `room_objects` match, then a boundary-safe legacy alias. Free-form substring matches are forbidden. Spatial localization still degrades Qwen → Gemini → the original final-frame screenshot without blocking alert storage, proactive creation, or delivery.
 
 ### Media paths
 

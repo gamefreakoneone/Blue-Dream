@@ -31,7 +31,19 @@ describe the objects they are interacting with. Once the user is done using the 
 Also describe if the patient has added new objects to the environment (and their respective location wrt to the environment) or removed objects from the environment.
 You will write these results in the video description, and the objects that the user interacted with in the room in the room_objects list. 
 Objects that have been removed from the environment will not be in the room_objects list.
-Also provide factual safety observations only. Do not make the final alert decision. If a room contains a possible unattended cooking or kitchen hazard, such as a stove, burner, pan, pot, boiling liquid, smoke, flame, or active cooking after the patient leaves the room/frame, set danger_candidate to true and describe the evidence in observed_hazards and scene_end_state. If the scene is ambiguous, describe that in uncertainties instead of inventing danger.
+Also provide factual safety observations only. Do not make the final alert decision.
+Look for clear environmental hazards in any monitored room, including unattended
+fire, smoke, gas, cooking, or heat; sharp objects left in an unsafe place;
+exposed electrical hazards; spills or obstacles that create a trip risk; and open
+or spilled medication or household chemicals. Judge the state and context, not
+the mere presence of an object. For example, a patient safely holding a knife
+while cutting fruit is ordinary activity, while a sharp knife left on a bed after
+the patient exits is a danger candidate. When evidence supports safety review,
+set danger_candidate to true, name the concrete hazardous object in
+observed_hazards, and describe its final location/state in scene_end_state. Do
+not use this path for a person falling or leaving a geofence; those have separate
+detectors. If the scene is ambiguous, describe that in uncertainties instead of
+inventing danger.
 
 Output Example:
 {
@@ -64,7 +76,7 @@ class video_results(BaseModel):
     )
     observed_hazards: list[str] = Field(
         default_factory=list,
-        description="Factual hazards visible in the video, without deciding whether to alert.",
+        description="Factual environmental hazards visible in the video, naming the concrete hazardous object and unsafe context without deciding whether to alert.",
     )
     uncertainties: list[str] = Field(
         default_factory=list,

@@ -19,7 +19,7 @@ Memoria is designed around one practical idea: use local, grounded AI to help pa
 - **Semantic recall**: Past room events are normalized into canonical memory records, embedded through the configured provider, and indexed in ChromaDB for evidence retrieval.
 - **Durable patient memory**: Conversation context, stable profile facts, and patient-created reminders survive backend restarts in MongoDB without entering the monitoring-evidence index.
 - **Proactive patient guidance**: Safety warnings, morning reports, and time- or event-triggered reminders appear as agent-initiated web chat turns.
-- **Safety reasoning prototype**: Factual observations from room events can be judged for patient-actionable risks, such as unattended cooking or ambiguous hazards.
+- **Safety reasoning prototype**: Factual observations from Bedroom and Living Room events are conservatively judged for clear environmental risks such as unsafe sharp objects, unattended heat/fire, electrical hazards, spills, and accessible chemicals or medication.
 - **Patient web UI**: FastAPI serves the installable React PWA at `http://localhost:8000` after its production bundle has been built.
 - **Fall detection**: A custom YOLO model watches live camera feeds and can notify a caregiver or emergency contact through the alert path.
 
@@ -45,7 +45,7 @@ Full-video Qwen analysis uses a private Alibaba OSS presigned URL because inline
 4. A patient asks, "Where are my keys?" or "What was I doing today?"
 5. The configured model routes the query, judges evidence quality, and synthesizes a grounded response.
 6. If the object is present in a current-room image, Memoria sends that image to the configured spatial provider for highlighting.
-7. If a safety event is detected, the configured model judges whether the patient or caregiver should be alerted; actionable patient warnings enter the proactive channel.
+7. If a clear environmental hazard is observed, the configured model names the visible hazard object and judges whether the patient should be alerted; actionable warnings are spatially highlighted and enter the proactive channel. Falls continue through the separate caretaker-only path.
 8. The installable web app polls for proactive safety, morning-report, and reminder turns; Web Push wakes it when closed, while the atomic poll remains the sole renderer and pending-to-delivered claim.
 
 ## Architecture
@@ -277,6 +277,27 @@ Event reminders appear after a recording ends and full video processing complete
 typically about a minute after the patient leaves the frame. This latency is expected
 for the leaving-the-house demo beat.
 
+### Dry-run a hazard video without sending an alert
+
+Use the provider-backed checker to validate a staged Bedroom or Living Room clip
+before exercising MongoDB, the PWA, or phone notifications:
+
+```powershell
+conda run -n Project-Memoria python scripts/check_hazard_video.py --video "C:\path\knife-demo.mp4" --room bedroom
+```
+
+Add `--screenshot "C:\path\final-frame.jpg"` to supply the final-state image;
+otherwise the checker extracts the video's last frame with the same helper used by
+the capture pipeline. Media outside `Storage/` is copied to a gitignored
+`Storage/hazard_checks/<run-id>/` directory. The checker uses the configured
+video, safety, and spatial providers, saves `result.json` and any highlighted
+image, and prints the decision and artifact paths. It deliberately makes no
+MongoDB, Chroma, proactive-message, or push writes.
+
+Exit codes are `0` for an actionable alert with a generated highlight, `2` for no
+actionable alert, `3` when an alert would fire but highlighting falls back to the
+original frame, and `1` for configuration or provider failure.
+
 ## Running the System
 
 ### 1. Start the backend API and web UI
@@ -504,6 +525,8 @@ The first geofence implementation remains intentionally prototype-simple. The ba
 - Qwen is the default provider profile. Silent capture video and separately recorded microphone audio are analyzed independently and combined during ingestion.
 - OSS is only a private transfer bridge for model access. Local `Storage/` files remain authoritative, presigned URLs are short-lived, and signed queries are never logged.
 - The video degradation ladder is OSS-URL Qwen → full-video Gemini → a partial event with the existing reassuring unavailable note. Frame sampling is not used.
+- Patient safety judging is room-agnostic but conservative: it evaluates unsafe state and context rather than object presence alone. A knife used normally while cutting fruit is not a warning; a sharp knife left on a bed after the patient exits is an actionable demo case.
+- Spatial alert targeting uses the safety judge's structured `hazard_object` first, then whole-word evidence fallbacks. A missing box still degrades to the original screenshot without blocking alert storage or delivery.
 - Standards-based Web Push is the active patient notification path. Legacy FCM code and `/devices/register` stay dormant and are not part of the demo.
 - Capture defaults to camera indices `1,2`, mapped to room `0 = Bedroom` and
   `1 = Living Room`; override the device-to-room mapping in `.env` for other hardware.
@@ -517,7 +540,7 @@ The first geofence implementation remains intentionally prototype-simple. The ba
 Current overhaul status is tracked in [`docs/FEATURE_STATUS.md`](docs/FEATURE_STATUS.md).
 
 - **Validated offline**: unified provider resolution/client contracts, structured JSON hardening, provider-specific semantic indexes, media paths, and existing backend contracts.
-- **Validated**: specs 0006-0008 durable memory, memory lifecycle, and proactive turns.
+- **Validated**: specs 0006-0008 durable memory, memory lifecycle, and proactive turns; the room-agnostic safety amendment is automatically validated, with its user-supplied staged-video visual check explicitly pending.
 - **Implemented, pending phone validation**: spec 0013 React PWA, Web Push wake-up chain, reminder sweep, patient screens, and removal of the Expo prototype.
 - **Next**: spec 0009 voice agent remains a stretch after the demo-morning phone checklist.
 - **Planned**: voice, submission polish, optional Alibaba deployment, and the OpenAI provider flip.

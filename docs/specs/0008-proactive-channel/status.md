@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed.
+Completed. The 2026-07-20 room-agnostic safety corrective amendment is implemented and automatically validated; its user-supplied staged-video check remains pending.
 
 ## Verification Evidence
 
@@ -31,3 +31,29 @@ Completed.
 ### Commit evidence
 
 - Implementation commit: `4456ff9` (`feat: implement spec 0008 proactive channel`).
+
+## 2026-07-20 Room-Agnostic Safety Corrective Amendment
+
+### Implemented behavior
+
+- Video observations and the safety judge now cover conservative environmental hazards in Bedroom and Living Room scenes rather than only kitchen/cooking hazards. Safe knife use is explicitly distinct from a knife left on a bed after the patient exits.
+- New safety assessments add backward-compatible `hazard_object`; the alert selector uses that structured label first, then unambiguous whole-word room-object evidence, then boundary-safe aliases. Regression coverage prevents `spot`, `panicked`, `companion`, `expanded`, and `fireplace` substring errors.
+- The production warning threshold, Mongo-before-delivery ordering, proactive failure isolation, Qwen→Gemini→original-image fallback, caretaker-only fall path, and geofence behavior remain unchanged.
+- `scripts/check_hazard_video.py` provides a no-persistence/no-delivery provider-backed dry run, production-style final-frame extraction, JSON evidence, highlighted artifact path, and documented exit codes.
+
+### Automated evidence
+
+- `conda run -n Project-Memoria python -m compileall -q Blue_dream_agents Capture scripts tests` passed. Conda printed only its existing non-fatal missing OpenCL `temp.txt` cleanup message.
+- Targeted alert/safety/CLI regression run: **34 passed**, 2 pre-existing warnings, 0 failures/errors in 20.62 seconds; the final room-agnostic safety file rerun after adding OSS-upload fallback coverage passed **19 tests** in 5.06 seconds.
+- Full suite: `conda run -n Project-Memoria python -m pytest tests/ -q --basetemp <Storage pytest temp> -p no:cacheprovider` → **176 passed**, 2 pre-existing warnings, 0 failures/errors in 27.59 seconds (157-test baseline plus 19 corrective-amendment tests).
+- `UI/npm.cmd run build` passed with Vite 8.1.5: 31 modules transformed; JS 225.82 kB (69.89 kB gzip), CSS 20.36 kB (5.35 kB gzip).
+- `conda run -n Project-Memoria python scripts/check_hazard_video.py --help` passed and exposed required `--video`, required `--room {bedroom,living-room}`, and optional `--screenshot` arguments.
+- No live media was uploaded and no production MongoDB, Chroma, alert, proactive-message, or push write was performed during this amendment.
+
+### Pending manual evidence
+
+- [ ] Run the CLI on the future staged knife-on-bed clip and require exit `0`, `alert_would_fire=true`, `hazard_object`/`highlight_target` identifying the knife, `highlight_status="generated"`, and a visually correct box before the full capture-to-phone demonstration.
+
+### Corrective-amendment commit evidence
+
+- Implementation commit: this commit/`HEAD` (`fix: generalize room safety alerts`).

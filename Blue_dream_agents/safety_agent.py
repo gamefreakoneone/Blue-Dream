@@ -32,6 +32,13 @@ class SafetyAssessment(BaseModel):
     )
     severity: Literal["none", "low", "medium", "high", "critical"] = "none"
     hazard_type: str = ""
+    hazard_object: str = Field(
+        default="",
+        description=(
+            "Concise visible object responsible for an actionable warning, preferably "
+            "matching a room_objects label; empty when no object can be grounded."
+        ),
+    )
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     patient_message: str = ""
     detailed_explanation: str = ""
@@ -86,21 +93,32 @@ def build_observation_bundle(event: MemoryEvent) -> SafetyObservationBundle:
 def _system_prompt() -> str:
     return with_patient_answer_context(
         """
-        You are Memoria's local Gemma safety judge. Gemini has already produced
-        factual video observations. Your job is to decide whether the patient needs
-        an immediate, actionable safety warning.
+        You are Memoria's safety judge. A video model has already produced factual
+        observations from a Bedroom or Living Room event. Decide whether the patient
+        needs an immediate, actionable warning about an environmental hazard.
 
-        Scope for this first implementation:
-        - unattended kitchen or cooking risks
-        - active stove, burner, pan, pot, boiling liquid, smoke, flame, gas, or
-          active cooking that remains after the patient leaves the room/frame
+        Room-agnostic scope:
+        - unattended fire, smoke, gas, cooking, or dangerous heat
+        - sharp objects left in unsafe locations
+        - exposed electrical hazards
+        - spills or obstacles that create a clear trip risk
+        - open or spilled medication or household chemicals in an unsafe state
 
         Conservative policy:
         - Alert only when the supplied evidence clearly supports a real risk.
-        - Do not invent hazards, rooms, appliances, smoke, flames, or patient actions.
-        - If the evidence is ambiguous or only says a kitchen object exists, do not alert.
+        - Judge unsafe state and context, not the mere presence of an ordinary object.
+        - A patient using a knife normally while cutting fruit is not itself a warning. A
+          sharp knife left on a bed after the patient exits is actionable.
+        - Do not invent hazards, rooms, objects, or patient actions.
+        - If evidence is ambiguous or only says an object exists, do not alert.
+        - Do not classify falls or geofence events here. Dedicated paths send falls
+          to caregivers and preserve the existing geofence behavior.
         - If a final screenshot is provided, use it as current-state evidence, but
           do not require screenshot certainty when the video evidence is strong.
+        - When warning_needed is true, set hazard_object to one concise visible object
+          label, preferably copied from room_objects (for example "knife" or
+          "electrical cord"). Do not include its location or a full sentence. Use an
+          empty string when no object can be grounded.
         - Patient-facing text must be short, calm, direct, and tell the patient what
           to do now.
         """
@@ -114,10 +132,11 @@ def _structured_prompt(bundle: SafetyObservationBundle) -> dict[str, Any]:
         "output_guidance": {
             "warning_needed": "true only for clear actionable danger",
             "severity": "none for no alert, low for store-only concern, medium/high/critical for actionable alerts",
-            "hazard_type": "for example unattended_cooking, gas_stove, smoke, flame, fall, geofence_exit, or empty",
+            "hazard_type": "for example sharp_object_left_unsafe, unattended_cooking, exposed_electrical, spill_trip_hazard, accessible_chemical, or empty",
+            "hazard_object": "one concise visible object label, preferably copied from room_objects; empty if warning_needed is false or no object is groundable",
             "patient_message": "one short notification body if warning_needed is true",
             "detailed_explanation": "plain explanation for the mobile alert detail screen",
-            "recommended_action": "specific patient action such as return_to_kitchen or call_for_help",
+            "recommended_action": "specific patient action such as move_knife_to_safe_place, turn_off_stove, avoid_spill, or call_for_help",
         },
     }
 

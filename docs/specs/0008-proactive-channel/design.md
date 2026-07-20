@@ -6,6 +6,22 @@
 - Existing geofence endpoints are a preserved contract but gain no new behavior (geofence proactive check-ins are post-hackathon backlog).
 - `/query` and conversation-session contracts unchanged; proactive turns append via the existing `conversation_memory.append_conversation_turn` API.
 - Patient-facing text rules: warm, short, no raw internals.
+- The YOLO fall path remains caretaker-only; geofence behavior remains unchanged.
+
+## 2026-07-20 room-agnostic safety corrective amendment
+
+- `video_agent.py` changes only its observation policy: clear environmental hazards in any configured room set `danger_candidate` and name the concrete object/state; ordinary object presence and safe use do not.
+- `SafetyAssessment` adds optional `hazard_object` with an empty default. The judge returns a concise visible label for actionable warnings and explicitly excludes fall/geofence decisions.
+- `alert_service.choose_highlight_target` selects: normalized structured target → one unambiguous whole-word room-object match → whole-word legacy alias → no target/original image. Alias evidence may disambiguate a contextual surface such as `bed` from the actual `knife`; raw substring matching is removed.
+- Spatial grounding combines the detailed explanation, factual observed hazards, and final scene state. Existing Qwen/Gemini fallback, media-path forms, highlight statuses, severity gate, persistence order, proactive failure isolation, and push behavior are unchanged.
+
+Dry-run CLI:
+
+```powershell
+conda run -n Project-Memoria python scripts/check_hazard_video.py --video "C:\path\knife-demo.mp4" --room bedroom [--screenshot "C:\path\final.jpg"]
+```
+
+The script stages external media under `Storage/hazard_checks/<run-id>/`, extracts the production-style final frame when needed, and writes `result.json`. Exit codes: `0` alert+highlight, `1` runtime/configuration failure, `2` no actionable alert, `3` alert+original-image fallback. It never invokes alert creation or any persistence/delivery function.
 
 ## Module: `Blue_dream_agents/proactive_service.py`
 
@@ -58,6 +74,7 @@ The pending handler: `check_due_reminders(now)` → `get_pending(now)` → for e
 - Morning report: first event of day fires once; second event same day doesn't; date boundary respects project timezone.
 - Trigger failure isolation: proactive creation raising doesn't break alert storage (regression test around the alert path).
 - Endpoint contract tests.
+- Corrective-amendment tests: structured target precedence; unambiguous room-object and alias fallbacks; false-substring regressions; safe knife use vs knife-left-on-bed prompt policy; fall/geofence patient-gate exclusion; image generation/fallback; all CLI exit states and no-persistence dry-run behavior.
 
 ## Validation Commands
 
@@ -65,4 +82,4 @@ The pending handler: `check_due_reminders(now)` → `get_pending(now)` → for e
 conda run -n Project-Memoria python -m pytest tests/ -q
 ```
 
-Live demo-beat rehearsal: ingest (or replay) a hazard clip → warning bubble with image inside ~5s of the alert; create a reminder due in one minute → bubble arrives; set an event reminder ("water bottle when I leave this morning") → ingest a matching leaving-the-room clip inside the window → reminder bubble after processing, and a second matching clip fires nothing; morning report fires on the first event after midnight (or temporarily set the date window to test).
+Live demo-beat rehearsal: first run the dry-run CLI on a staged knife-on-bed clip and require exit `0` plus a visually correct knife box. Then ingest the clip through capture → warning bubble with image inside ~5s of the alert; create a reminder due in one minute → bubble arrives; set an event reminder ("water bottle when I leave this morning") → ingest a matching leaving-the-room clip inside the window → reminder bubble after processing, and a second matching clip fires nothing; morning report fires on the first event after midnight (or temporarily set the date window to test).
