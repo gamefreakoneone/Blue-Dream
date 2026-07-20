@@ -383,8 +383,11 @@ async def _synthesize_semantic_answer(
         "and durable profile facts. Prefer transcript evidence when it directly "
         "answers the user's question. Mention uncertainty when the evidence is "
         "partial. Do not invent reasons, times, or conversations that are not "
-        "present in the evidence. Answer the question directly; do not describe "
-        "why one event was selected."
+        "present in the evidence. Answer only the exact time, person, topic, or "
+        "activity the user asked about. Do not volunteer neighboring events or turn "
+        "a focused question into a broader timeline. Use the fewest sentences needed "
+        "unless the user explicitly asks for a full chronology. Answer the question "
+        "directly; do not describe why one event was selected."
     )
     if working_memory_block:
         system_prompt = f"{system_prompt}\n\n{working_memory_block}"

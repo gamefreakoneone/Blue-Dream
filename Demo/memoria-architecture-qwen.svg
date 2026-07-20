@@ -1,0 +1,375 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1125" viewBox="0 0 1800 1125" role="img" aria-labelledby="diagram-title diagram-desc">
+  <title id="diagram-title">Project Memoria Qwen Cloud architecture</title>
+  <desc id="diagram-desc">Architecture of Project Memoria showing home cameras and microphones, local capture and ingestion, the FastAPI and Jeeves backend, MongoDB and Chroma memory stores, Alibaba OSS and Qwen Cloud models, the React patient web app, proactive Web Push delivery, Gemini fallback paths, and caretaker-only fall alerts.</desc>
+
+  <defs>
+    <linearGradient id="background-gradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbfcff"/>
+      <stop offset="1" stop-color="#f3f6fb"/>
+    </linearGradient>
+    <linearGradient id="qwen-gradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f1ebff"/>
+    </linearGradient>
+    <filter id="panel-shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#25324d" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arrow-primary" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#334b6b"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#687386"/>
+    </marker>
+    <marker id="arrow-danger" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c93a47"/>
+    </marker>
+    <style>
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #17223b; }
+      .title { font-size: 43px; font-weight: 500; letter-spacing: -0.6px; }
+      .subtitle { font-size: 20px; fill: #516076; }
+      .panel { stroke-width: 2; filter: url(#panel-shadow); }
+      .panel-title { font-size: 22px; font-weight: 500; letter-spacing: 0.6px; }
+      .panel-number { font-size: 17px; font-weight: 500; text-anchor: middle; dominant-baseline: middle; fill: #ffffff; }
+      .card { fill: #ffffff; stroke-width: 1.5; }
+      .card-title { font-size: 22px; font-weight: 500; }
+      .card-copy { font-size: 17px; fill: #46546b; }
+      .card-copy-compact { font-size: 16px; fill: #46546b; }
+      .micro { font-size: 14px; fill: #617087; }
+      .model-name { font-size: 18px; font-weight: 500; }
+      .model-copy { font-size: 15px; fill: #4e5870; }
+      .tag { font-size: 14px; font-weight: 500; letter-spacing: 0.5px; }
+      .flow { fill: none; stroke: #334b6b; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow-primary); }
+      .flow-bidirectional { fill: none; stroke: #334b6b; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; marker-start: url(#arrow-primary); marker-end: url(#arrow-primary); }
+      .flow-muted { fill: none; stroke: #687386; stroke-width: 2.5; stroke-dasharray: 10 8; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow-muted); }
+      .flow-danger { fill: none; stroke: #c93a47; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow-danger); }
+      .flow-label { font-size: 15px; font-weight: 500; fill: #334b6b; }
+      .danger-label { font-size: 15px; font-weight: 500; fill: #a52435; }
+      .legend { font-size: 16px; fill: #44536a; }
+      .principle { font-size: 17px; font-weight: 500; }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1125" fill="url(#background-gradient)"/>
+  <circle cx="1655" cy="45" r="165" fill="#7857d6" opacity="0.035"/>
+  <circle cx="1735" cy="95" r="95" fill="#168da2" opacity="0.04"/>
+
+  <text class="title" x="50" y="58">Project Memoria — Qwen Cloud Architecture</text>
+  <text class="subtitle" x="50" y="91">A memory-grounded dementia assistant: local perception, durable evidence, grounded recall, and proactive care.</text>
+  <g transform="translate(1515 42)">
+    <rect width="235" height="43" rx="21.5" fill="#f1ebff" stroke="#7453c7" stroke-width="1.5"/>
+    <circle cx="23" cy="21.5" r="7" fill="#7453c7"/>
+    <text x="42" y="27" class="tag" fill="#4e319c">QWEN DEMO PROFILE</text>
+  </g>
+
+  <!-- Domain panels -->
+  <rect class="panel" x="50" y="120" width="330" height="420" rx="24" fill="#f0faf5" stroke="#249c65"/>
+  <rect class="panel" x="410" y="120" width="560" height="420" rx="24" fill="#fff8e8" stroke="#d58a00"/>
+  <rect class="panel" x="1000" y="120" width="560" height="420" rx="24" fill="#f6f2ff" stroke="#7453c7"/>
+  <rect class="panel" x="50" y="575" width="720" height="350" rx="24" fill="#f3f7ff" stroke="#3e6fb6"/>
+  <rect class="panel" x="800" y="575" width="950" height="350" rx="24" fill="#effafc" stroke="#188ca2"/>
+
+  <!-- Domain headings -->
+  <g>
+    <circle cx="80" cy="153" r="16" fill="#249c65"/><text class="panel-number" x="80" y="153">1</text>
+    <text class="panel-title" x="106" y="161" fill="#147346">HOME CAPTURE</text>
+  </g>
+  <g>
+    <circle cx="440" cy="153" r="16" fill="#d58a00"/><text class="panel-number" x="440" y="153">2</text>
+    <text class="panel-title" x="466" y="161" fill="#9a5f00">BACKEND ORCHESTRATION</text>
+  </g>
+  <g>
+    <circle cx="1030" cy="153" r="16" fill="#7453c7"/><text class="panel-number" x="1030" y="153">3</text>
+    <text class="panel-title" x="1056" y="161" fill="#5637a8">ALIBABA CLOUD</text>
+  </g>
+  <g>
+    <circle cx="80" cy="608" r="16" fill="#3e6fb6"/><text class="panel-number" x="80" y="608">4</text>
+    <text class="panel-title" x="106" y="616" fill="#285894">DURABLE MEMORY</text>
+  </g>
+  <g>
+    <circle cx="830" cy="608" r="16" fill="#188ca2"/><text class="panel-number" x="830" y="608">5</text>
+    <text class="panel-title" x="856" y="616" fill="#0f7182">PATIENT + CAREGIVER EXPERIENCE</text>
+  </g>
+
+  <!-- Connectors behind nodes -->
+  <path class="flow" d="M 215 255 V 290"/>
+  <path class="flow" d="M 215 380 V 415"/>
+  <path class="flow" d="M 355 463 H 395 V 255 H 435"/>
+  <path class="flow" d="M 670 258 H 705"/>
+  <path class="flow" d="M 670 440 H 688 V 317 H 705"/>
+  <path class="flow" d="M 825 370 V 330"/>
+  <path class="flow" d="M 945 255 H 1025"/>
+  <path class="flow" d="M 670 212 H 685 V 174 H 1463 V 185"/>
+  <path class="flow" d="M 1390 275 H 1360"/>
+  <path class="flow-muted" d="M 1360 454 H 1573 V 330 H 1590"/>
+
+  <path class="flow" d="M 435 286 H 395 V 558 H 250 V 640"/>
+  <path class="flow" d="M 552 510 V 605 H 610 V 640"/>
+  <path class="flow" d="M 440 783 H 475"/>
+  <path class="flow" d="M 475 694 H 440"/>
+  <path class="flow-bidirectional" d="M 1005 640 V 555 H 552 V 510"/>
+  <path class="flow" d="M 825 510 V 535 H 1340 V 640"/>
+  <path class="flow" d="M 1215 750 H 1185"/>
+  <path class="flow" d="M 745 860 H 785 V 824 H 825"/>
+  <path class="flow-danger" d="M 925 510 V 525 H 1510 V 625 H 1610 V 640"/>
+
+  <!-- Flow labels -->
+  <g transform="translate(365 405)">
+    <rect width="71" height="27" rx="13.5" fill="#ffffff" stroke="#d7deea"/>
+    <text class="flow-label" x="35.5" y="19" text-anchor="middle">event</text>
+  </g>
+  <g transform="translate(950 227)">
+    <rect width="70" height="27" rx="13.5" fill="#ffffff" stroke="#d8d0f0"/>
+    <text class="flow-label" x="35" y="19" text-anchor="middle">HTTPS</text>
+  </g>
+  <g transform="translate(1250 146)">
+    <rect width="175" height="27" rx="13.5" fill="#ffffff" stroke="#d8d0f0"/>
+    <text class="flow-label" x="87.5" y="19" text-anchor="middle">upload finished MP4</text>
+  </g>
+  <g transform="translate(1440 421)">
+    <rect width="112" height="27" rx="13.5" fill="#ffffff" stroke="#ccd2dc"/>
+    <text class="flow-label" x="56" y="19" text-anchor="middle">on failure</text>
+  </g>
+  <g transform="translate(170 548)">
+    <rect width="194" height="29" rx="14.5" fill="#ffffff" stroke="#d7deea"/>
+    <text class="flow-label" x="97" y="20" text-anchor="middle">canonical MemoryEvent</text>
+  </g>
+  <g transform="translate(536 577)">
+    <rect width="145" height="27" rx="13.5" fill="#ffffff" stroke="#d7deea"/>
+    <text class="flow-label" x="72.5" y="19" text-anchor="middle">semantic query</text>
+  </g>
+  <g transform="translate(652 548)">
+    <rect width="300" height="29" rx="14.5" fill="#ffffff" stroke="#d7deea"/>
+    <text class="flow-label" x="150" y="20" text-anchor="middle">HTTPS query ↔ grounded answer + image</text>
+  </g>
+  <g transform="translate(1035 542)">
+    <rect width="178" height="29" rx="14.5" fill="#ffffff" stroke="#d7deea"/>
+    <text class="flow-label" x="89" y="20" text-anchor="middle">persist + push wake</text>
+  </g>
+  <g transform="translate(1226 724)">
+    <rect width="92" height="27" rx="13.5" fill="#ffffff" stroke="#d7deea"/>
+    <text class="flow-label" x="46" y="19" text-anchor="middle">wake</text>
+  </g>
+  <g transform="translate(757 829)">
+    <rect width="133" height="27" rx="13.5" fill="#ffffff" stroke="#d7deea"/>
+    <text class="flow-label" x="66.5" y="19" text-anchor="middle">static evidence</text>
+  </g>
+  <g transform="translate(1285 522)">
+    <rect width="208" height="29" rx="14.5" fill="#fff3f4" stroke="#e5a4ab"/>
+    <text class="danger-label" x="104" y="20" text-anchor="middle">fall alert → caretaker only</text>
+  </g>
+
+  <!-- Home capture cards -->
+  <g>
+    <rect class="card" x="75" y="185" width="280" height="70" rx="15" stroke="#78bd96"/>
+    <g transform="translate(95 202)" stroke="#147346" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="0" y="7" width="29" height="22" rx="4"/><circle cx="14.5" cy="18" r="6"/>
+      <path d="M8 7l4-5h8l4 5M40 8v10a7 7 0 0014 0V8M47 25v8M41 33h12"/>
+    </g>
+    <text class="card-title" x="158" y="211">Cameras + mics</text>
+    <text class="card-copy" x="158" y="237">Room video + audio</text>
+  </g>
+  <g>
+    <rect class="card" x="75" y="290" width="280" height="90" rx="15" stroke="#78bd96"/>
+    <g transform="translate(96 309)" stroke="#147346" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 26l13-21 13 21z"/><circle cx="17" cy="21" r="1.5" fill="#147346"/><path d="M17 12v5"/>
+    </g>
+    <text class="card-title" x="143" y="318">YOLO person / fall</text>
+    <text class="card-copy" x="143" y="345">Activity starts recording</text>
+    <text class="card-copy" x="143" y="367">Persistent fall → alert service</text>
+  </g>
+  <g>
+    <rect class="card" x="75" y="415" width="280" height="95" rx="15" stroke="#78bd96"/>
+    <g transform="translate(95 438)" stroke="#147346" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="0" y="1" width="34" height="27" rx="4"/><path d="M34 9l11-6v23l-11-6M6 36h34M10 42h26"/>
+    </g>
+    <text class="card-title" x="154" y="442">Event recorder</text>
+    <text class="card-copy" x="154" y="469">MP4 + MP3 + end screenshot</text>
+    <text class="card-copy" x="154" y="492">Queued for background ingest</text>
+  </g>
+
+  <!-- Backend orchestration cards -->
+  <g>
+    <rect class="card" x="435" y="185" width="235" height="145" rx="16" stroke="#e2ad45"/>
+    <circle cx="466" cy="217" r="18" fill="#fff1cc"/>
+    <path d="M457 217h18M466 208v18" stroke="#9a5f00" stroke-width="2.5" stroke-linecap="round"/>
+    <text class="card-title" x="493" y="224">Consolidator</text>
+    <text class="card-copy-compact" x="455" y="257">Parallel full-video + ASR</text>
+    <text class="card-copy-compact" x="455" y="282">Safety + importance scoring</text>
+    <text class="card-copy-compact" x="455" y="307">Create canonical MemoryEvent</text>
+  </g>
+  <g>
+    <rect class="card" x="705" y="185" width="240" height="145" rx="16" stroke="#e2ad45"/>
+    <circle cx="737" cy="217" r="18" fill="#fff1cc"/>
+    <path d="M728 216h18M733 210l-6 6 6 6M741 210l6 6-6 6" stroke="#9a5f00" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="card-title" x="764" y="224">Provider client</text>
+    <text class="card-copy-compact" x="725" y="257">Async OpenAI-protocol client</text>
+    <text class="card-copy-compact" x="725" y="282">JSON hardening + strict retry</text>
+    <text class="card-copy-compact" x="725" y="307">Hot-swappable; Qwen is default</text>
+  </g>
+  <g>
+    <rect class="card" x="435" y="370" width="235" height="140" rx="16" stroke="#e2ad45"/>
+    <circle cx="466" cy="402" r="18" fill="#fff1cc"/>
+    <path d="M456 402h20M466 392v20M459 395l14 14M473 395l-14 14" stroke="#9a5f00" stroke-width="1.9" stroke-linecap="round"/>
+    <text class="card-title" x="493" y="409">FastAPI + Jeeves</text>
+    <text class="card-copy-compact" x="455" y="442">REST APIs + static media</text>
+    <text class="card-copy-compact" x="455" y="466">Object · time · semantic</text>
+    <text class="card-copy-compact" x="455" y="490">Reminder · general routing</text>
+  </g>
+  <g>
+    <rect class="card" x="705" y="370" width="240" height="140" rx="16" stroke="#e2ad45"/>
+    <circle cx="737" cy="402" r="18" fill="#fff1cc"/>
+    <path d="M728 406h18M731 401h12M734 396h6" stroke="#9a5f00" stroke-width="2.2" stroke-linecap="round"/>
+    <text class="card-title" x="764" y="409">Memory + proactive</text>
+    <text class="card-copy-compact" x="725" y="442">Consolidation + daily digests</text>
+    <text class="card-copy-compact" x="725" y="466">Safety · morning · reminders</text>
+    <text class="card-copy-compact" x="725" y="490">Alert service + Web Push hook</text>
+  </g>
+
+  <!-- Alibaba Cloud cards -->
+  <g>
+    <rect x="1025" y="185" width="335" height="335" rx="18" fill="url(#qwen-gradient)" stroke="#7453c7" stroke-width="1.8"/>
+    <circle cx="1060" cy="219" r="20" fill="#e8defe"/>
+    <path d="M1050 221c0-7 5-12 11-12 5 0 9 3 10 8 5 1 9 5 9 10 0 6-5 11-11 11h-18c-6 0-11-4-11-10 0-4 4-7 10-7z" fill="none" stroke="#5637a8" stroke-width="2.4"/>
+    <text class="card-title" x="1092" y="226">Qwen Cloud · DashScope</text>
+    <line x1="1048" y1="249" x2="1337" y2="249" stroke="#d7ccef"/>
+
+    <circle cx="1056" cy="275" r="6" fill="#7453c7"/>
+    <text class="model-name" x="1072" y="281">qwen3-vl-flash</text>
+    <text class="model-copy" x="1072" y="302">Full-video understanding · image presence</text>
+
+    <circle cx="1056" cy="329" r="6" fill="#7453c7"/>
+    <text class="model-name" x="1072" y="335">qwen3-vl-plus</text>
+    <text class="model-copy" x="1072" y="356">Spatial grounding boxes</text>
+
+    <circle cx="1056" cy="383" r="6" fill="#7453c7"/>
+    <text class="model-name" x="1072" y="389">qwen3-asr-flash</text>
+    <text class="model-copy" x="1072" y="410">Paired room-audio transcription</text>
+
+    <circle cx="1056" cy="437" r="6" fill="#7453c7"/>
+    <text class="model-name" x="1072" y="443">qwen3.7-plus</text>
+    <text class="model-copy" x="1072" y="464">Routing · synthesis · judging · safety</text>
+    <text class="model-copy" x="1072" y="483">Reminders · summaries · daily digests</text>
+
+    <circle cx="1056" cy="508" r="6" fill="#7453c7"/>
+    <text class="model-name" x="1072" y="514">text-embedding-v4 · 1024d</text>
+  </g>
+  <g>
+    <rect class="card" x="1390" y="185" width="145" height="165" rx="16" stroke="#9d86d8"/>
+    <ellipse cx="1462.5" cy="216" rx="28" ry="10" fill="#eee7ff" stroke="#7453c7" stroke-width="2"/>
+    <path d="M1434.5 216v28c0 6 12.5 10 28 10s28-4 28-10v-28M1434.5 230c0 6 12.5 10 28 10s28-4 28-10" fill="none" stroke="#7453c7" stroke-width="2"/>
+    <text class="card-title" x="1462.5" y="285" text-anchor="middle">Private OSS</text>
+    <text class="card-copy-compact" x="1462.5" y="309" text-anchor="middle">Presigned URL</text>
+    <text class="micro" x="1462.5" y="331" text-anchor="middle">private video bridge</text>
+  </g>
+  <g>
+    <rect x="1590" y="205" width="160" height="250" rx="20" fill="#f7f8fa" stroke="#687386" stroke-width="2" stroke-dasharray="9 7"/>
+    <text class="tag" x="1670" y="237" text-anchor="middle" fill="#566174">EXTERNAL FALLBACK</text>
+    <circle cx="1670" cy="278" r="23" fill="#e9ecf1"/>
+    <path d="M1658 281l8-8 7 6 10-12M1657 291h26" stroke="#566174" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="card-title" x="1670" y="328" text-anchor="middle">Gemini</text>
+    <text class="card-copy-compact" x="1670" y="356" text-anchor="middle">Full-video retry</text>
+    <text class="card-copy-compact" x="1670" y="382" text-anchor="middle">Spatial retry</text>
+    <text class="micro" x="1670" y="416" text-anchor="middle">No frame-sampling</text>
+    <text class="micro" x="1670" y="436" text-anchor="middle">fallback</text>
+  </g>
+
+  <!-- Durable memory cards -->
+  <g>
+    <rect class="card" x="75" y="640" width="365" height="250" rx="18" stroke="#6f94cc"/>
+    <ellipse cx="123" cy="682" rx="31" ry="11" fill="#e2ebfb" stroke="#3e6fb6" stroke-width="2"/>
+    <path d="M92 682v33c0 7 14 12 31 12s31-5 31-12v-33M92 698c0 7 14 12 31 12s31-5 31-12" fill="none" stroke="#3e6fb6" stroke-width="2"/>
+    <text class="card-title" x="171" y="690">MongoDB</text>
+    <g transform="translate(302 665)">
+      <rect width="112" height="28" rx="14" fill="#dfeafa"/>
+      <text class="tag" x="56" y="19" text-anchor="middle" fill="#285894">SOURCE OF TRUTH</text>
+    </g>
+    <text class="card-copy-compact" x="96" y="754">events · memory_summaries · conversations</text>
+    <text class="card-copy-compact" x="96" y="781">profile_facts · reminders · safety_alerts</text>
+    <text class="card-copy-compact" x="96" y="808">proactive_messages · push_subscriptions</text>
+    <text class="card-copy-compact" x="96" y="835">memory_digests · rebuildable cache</text>
+    <text class="principle" x="96" y="870" fill="#285894">Archive or consolidate — never erase.</text>
+  </g>
+  <g>
+    <rect class="card" x="475" y="640" width="270" height="165" rx="18" stroke="#6f94cc"/>
+    <ellipse cx="523" cy="680" rx="27" ry="10" fill="#e2ebfb" stroke="#3e6fb6" stroke-width="2"/>
+    <path d="M496 680v27c0 6 12 10 27 10s27-4 27-10v-27M496 694c0 6 12 10 27 10s27-4 27-10" fill="none" stroke="#3e6fb6" stroke-width="2"/>
+    <text class="card-title" x="565" y="687">ChromaDB</text>
+    <text class="card-copy-compact" x="497" y="742">Provider-specific semantic index</text>
+    <text class="card-copy-compact" x="497" y="767">Active events + daily summaries</text>
+    <text class="principle" x="497" y="792" fill="#285894">Always rebuildable from Mongo.</text>
+  </g>
+  <g>
+    <rect class="card" x="475" y="830" width="270" height="60" rx="15" stroke="#6f94cc"/>
+    <path d="M497 849h16l6 7h26v19h-48z" fill="#e2ebfb" stroke="#3e6fb6" stroke-width="2" stroke-linejoin="round"/>
+    <text class="card-title" x="560" y="858">Local Storage/</text>
+    <text class="micro" x="560" y="879">Media source of truth</text>
+  </g>
+  <text class="micro" x="447" y="677" text-anchor="middle">IDs</text>
+  <text class="micro" x="457" y="773" text-anchor="middle">embed</text>
+
+  <!-- Patient and caregiver cards -->
+  <g>
+    <rect class="card" x="825" y="640" width="360" height="250" rx="18" stroke="#5aa8b8"/>
+    <rect x="850" y="668" width="52" height="76" rx="9" fill="#dff3f6" stroke="#188ca2" stroke-width="2.2"/>
+    <circle cx="876" cy="733" r="3" fill="#188ca2"/>
+    <text class="card-title" x="925" y="690">Installable React PWA</text>
+    <text class="card-copy-compact" x="925" y="716">Served from FastAPI · UI/dist</text>
+    <text class="card-copy-compact" x="850" y="774">Chat · Reminders · Safety · Memories</text>
+    <text class="card-copy-compact" x="850" y="801">Highlighted evidence image + recall_debug</text>
+    <text class="card-copy-compact" x="850" y="828">Conversation session persists across restarts</text>
+    <g transform="translate(850 847)">
+      <rect width="137" height="28" rx="14" fill="#dff3f6"/>
+      <text class="tag" x="68.5" y="19" text-anchor="middle" fill="#0f7182">PATIENT EXPERIENCE</text>
+    </g>
+  </g>
+  <g>
+    <rect class="card" x="1215" y="640" width="250" height="250" rx="18" stroke="#5aa8b8"/>
+    <circle cx="1250" cy="682" r="21" fill="#dff3f6"/>
+    <path d="M1242 684c0-6 3-11 8-11s8 5 8 11l4 6h-24zM1247 694h6" fill="none" stroke="#188ca2" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="card-title" x="1281" y="689">Proactive delivery</text>
+    <text class="card-copy-compact" x="1238" y="735">Web Push wakes service worker</text>
+    <text class="card-copy-compact" x="1238" y="762">5-second pending-message poll</text>
+    <text class="card-copy-compact" x="1238" y="789">Atomic pending → delivered claim</text>
+    <text class="card-copy-compact" x="1238" y="816">Acknowledge after rendering</text>
+    <text class="micro" x="1238" y="851">Safety + morning reports</text>
+    <text class="micro" x="1238" y="872">Time + event reminders</text>
+  </g>
+  <g>
+    <rect class="card" x="1495" y="640" width="230" height="250" rx="18" stroke="#d7717c"/>
+    <circle cx="1531" cy="682" r="21" fill="#fff0f1"/>
+    <path d="M1521 687v-5c0-6 4-11 10-11s10 5 10 11v5l5 6h-30zM1527 698h8" fill="none" stroke="#c93a47" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="card-title" x="1563" y="689">Caregiver</text>
+    <text class="card-copy-compact" x="1518" y="735">Caretaker-only fall alert</text>
+    <text class="card-copy-compact" x="1518" y="762">Gmail / emergency contact</text>
+    <text class="card-copy-compact" x="1518" y="789">Derived context and screenshot</text>
+    <text class="card-copy-compact" x="1518" y="816">No raw surveillance dashboard</text>
+    <g transform="translate(1518 847)">
+      <rect width="131" height="28" rx="14" fill="#fff0f1"/>
+      <text class="tag" x="65.5" y="19" text-anchor="middle" fill="#a52435">FALL SAFETY PATH</text>
+    </g>
+  </g>
+
+  <!-- Legend and principles -->
+  <g>
+    <rect x="50" y="960" width="1700" height="125" rx="22" fill="#ffffff" stroke="#d5dce8" stroke-width="1.5"/>
+    <text class="card-title" x="78" y="997">How to read the system</text>
+
+    <path d="M80 1028 H 152" class="flow"/>
+    <text class="legend" x="170" y="1034">Primary runtime or data flow</text>
+
+    <path d="M430 1028 H 502" class="flow-muted"/>
+    <text class="legend" x="520" y="1034">Fallback only</text>
+
+    <path d="M690 1028 H 762" class="flow-danger"/>
+    <text class="legend" x="780" y="1034">Caretaker-only fall alert</text>
+
+    <circle cx="1065" cy="1028" r="8" fill="#3e6fb6"/>
+    <text class="legend" x="1082" y="1034">MongoDB is authoritative</text>
+
+    <circle cx="1335" cy="1028" r="8" fill="#8aa8d4"/>
+    <text class="legend" x="1352" y="1034">Chroma is rebuildable</text>
+
+    <text class="micro" x="78" y="1067">The Qwen submission uses the Qwen provider profile. OpenAI and Ollama profiles remain supported alternatives, but they are not active in this diagram.</text>
+    <text class="micro" x="1722" y="1067" text-anchor="end">No patient voice/TTS · No ECS boundary · Current implementation as of July 20, 2026</text>
+  </g>
+</svg>

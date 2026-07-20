@@ -107,6 +107,7 @@ class TimeQueryPlan(BaseModel):
         "general"
     )
     time_range: str = "today"
+    day_part: Literal["all_day", "morning", "afternoon", "evening"] = "all_day"
     room_name: Optional[str] = None
     activity: Optional[str] = None
     hours: int = 24
@@ -133,6 +134,20 @@ _SPEECH_RECALL_TERMS = (
     "conversation",
     "transcript",
 )
+_DAY_PART_RANGES: dict[str, tuple[datetime.time, datetime.time]] = {
+    "morning": (
+        datetime.time(hour=6),
+        datetime.time(hour=11, minute=59, second=59, microsecond=999999),
+    ),
+    "afternoon": (
+        datetime.time(hour=12),
+        datetime.time(hour=16, minute=59, second=59, microsecond=999999),
+    ),
+    "evening": (
+        datetime.time(hour=17),
+        datetime.time.max,
+    ),
+}
 SUMMARY_EVENT_BUDGET_CHARS = 18000
 TRANSCRIPT_PROMPT_BUDGET_CHARS = 18000
 ACTIVITY_PROMPT_BUDGET_CHARS = 18000
@@ -160,36 +175,49 @@ def _parse_room_name(room_name: str) -> Optional[int]:
 
 def _build_time_filter(
     time_range: str,
+    day_part: Literal["all_day", "morning", "afternoon", "evening"] = "all_day",
 ) -> tuple[datetime.datetime, datetime.datetime, str]:
     now = now_local()
     time_range_lower = time_range.lower().strip()
+    embedded_day_part = _extract_day_part_from_query(time_range_lower)
+    if day_part == "all_day" and embedded_day_part is not None:
+        day_part = embedded_day_part
+    normalized_range = re.sub(
+        r"\b(?:morning|afternoon|evening)\b", "", time_range_lower
+    ).strip()
+    if normalized_range == "this":
+        normalized_range = "today"
+    scope_date = now.date()
 
-    if time_range_lower == "yesterday":
+    if normalized_range == "yesterday":
+        scope_date = now.date() - timedelta(days=1)
         start = datetime.datetime.combine(
-            now.date() - timedelta(days=1), datetime.time.min, tzinfo=LOCAL_TZ
+            scope_date, datetime.time.min, tzinfo=LOCAL_TZ
         )
         end = datetime.datetime.combine(
-            now.date() - timedelta(days=1), datetime.time.max, tzinfo=LOCAL_TZ
+            scope_date, datetime.time.max, tzinfo=LOCAL_TZ
         )
         desc = "yesterday"
-    elif time_range_lower == "today":
+    elif normalized_range in ("today", "tonight"):
         start = datetime.datetime.combine(
             now.date(), datetime.time.min, tzinfo=LOCAL_TZ
         )
         end = now
         desc = "today"
-    elif time_range_lower in ("recently", "recent"):
+    elif normalized_range in ("recently", "recent"):
         start = now - timedelta(hours=3)
         end = now
         desc = "the last 3 hours"
-    elif "hour" in time_range_lower:
-        match = re.search(r"(\d+)", time_range_lower)
+    elif match := re.fullmatch(
+        r"(?:last|past)\s+(\d+)\s+hours?", normalized_range
+    ):
         hours = int(match.group(1)) if match else 3
         start = now - timedelta(hours=hours)
         end = now
         desc = f"the last {hours} hour{'s' if hours != 1 else ''}"
-    elif "day" in time_range_lower:
-        match = re.search(r"(\d+)", time_range_lower)
+    elif match := re.fullmatch(
+        r"(?:last|past)\s+(\d+)\s+days?", normalized_range
+    ):
         days = int(match.group(1)) if match else 1
         start = now - timedelta(days=days)
         end = now
@@ -198,17 +226,18 @@ def _build_time_filter(
         parsed_date: Optional[datetime.datetime] = None
         for date_format in ("%Y-%m-%d", "%B %d %Y", "%B %d, %Y", "%b %d %Y", "%b %d, %Y"):
             try:
-                parsed_date = datetime.datetime.strptime(time_range, date_format)
+                parsed_date = datetime.datetime.strptime(normalized_range, date_format)
                 break
             except ValueError:
                 continue
 
         if parsed_date is not None:
+            scope_date = parsed_date.date()
             start = datetime.datetime.combine(
-                parsed_date.date(), datetime.time.min, tzinfo=LOCAL_TZ
+                scope_date, datetime.time.min, tzinfo=LOCAL_TZ
             )
             end = datetime.datetime.combine(
-                parsed_date.date(), datetime.time.max, tzinfo=LOCAL_TZ
+                scope_date, datetime.time.max, tzinfo=LOCAL_TZ
             )
             desc = parsed_date.strftime("%B %d, %Y")
         else:
@@ -218,10 +247,20 @@ def _build_time_filter(
             end = now
             desc = "today"
 
+    if day_part != "all_day":
+        day_part_start, day_part_end = _DAY_PART_RANGES[day_part]
+        scoped_start = datetime.datetime.combine(
+            scope_date, day_part_start, tzinfo=LOCAL_TZ
+        )
+        scoped_end = datetime.datetime.combine(scope_date, day_part_end, tzinfo=LOCAL_TZ)
+        start = max(start, scoped_start)
+        end = min(end, scoped_end)
+        desc = f"this {day_part}" if desc == "today" else f"{desc} {day_part}"
+
     return start, end, desc
 
 
-def _extract_time_range_from_query(query: str) -> str:
+def _extract_explicit_time_range_from_query(query: str) -> Optional[str]:
     query_lower = query.lower()
     if "yesterday" in query_lower:
         return "yesterday"
@@ -252,7 +291,34 @@ def _extract_time_range_from_query(query: str) -> str:
     if natural_date_match:
         return natural_date_match.group(0)
 
-    return "today"
+    return None
+
+
+def _extract_time_range_from_query(query: str) -> str:
+    return _extract_explicit_time_range_from_query(query) or "today"
+
+
+def _extract_day_part_from_query(
+    query: str,
+) -> Optional[Literal["morning", "afternoon", "evening"]]:
+    query_lower = query.lower()
+    if "morning" in query_lower:
+        return "morning"
+    if "afternoon" in query_lower:
+        return "afternoon"
+    if "evening" in query_lower or "tonight" in query_lower:
+        return "evening"
+    return None
+
+
+def _apply_explicit_time_scope(query: str, plan: TimeQueryPlan) -> TimeQueryPlan:
+    explicit_time_range = _extract_explicit_time_range_from_query(query)
+    if explicit_time_range is not None:
+        plan.time_range = explicit_time_range
+    explicit_day_part = _extract_day_part_from_query(query)
+    if explicit_day_part is not None:
+        plan.day_part = explicit_day_part
+    return plan
 
 
 def _looks_like_speech_recall(query: str) -> bool:
@@ -265,6 +331,7 @@ def _deterministic_time_plan(query: str) -> Optional[TimeQueryPlan]:
         return TimeQueryPlan(
             intent="transcripts",
             time_range=_extract_time_range_from_query(query),
+            day_part=_extract_day_part_from_query(query) or "all_day",
             room_name=None,
             activity=None,
             hours=24,
@@ -318,8 +385,12 @@ async def _summarize_with_llm(
     prompt = with_monitoring_evidence_context(
         f'Question: "{user_query_context}"\n'
         f"Event log:\n{json.dumps(context_data, indent=2)}\n\n"
-        "Respond in 2-3 short sentences. Be warm, clear, and mention specific "
-        "times or rooms when useful."
+        "Answer the exact question using only relevant events. Use the fewest "
+        "sentences needed (normally 1-2). Do not volunteer events before or after "
+        "the requested scope, and do not turn a focused question into a whole-day "
+        "recap. If the user explicitly asks for a full day or timeline, summarize "
+        "that requested span chronologically. Be warm and mention times or rooms "
+        "only when they help answer the question."
     )
     return await invoke_text(
         prompt=prompt,
@@ -327,7 +398,8 @@ async def _summarize_with_llm(
             with_patient_answer_context(
                 "You are a compassionate memory assistant helping a dementia patient "
                 "recall recent activity. Convert third-person monitoring descriptions "
-                "into direct second-person phrasing."
+                "into direct second-person phrasing. Answer only the user's requested "
+                "time, person, topic, or activity; omit unrelated neighboring events."
             ),
             working_memory_block,
         ),
@@ -414,11 +486,23 @@ async def get_time_window_context(
 
 
 async def get_activity_history(
-    time_range: str, *, working_memory_block: str = ""
+    time_range: str,
+    *,
+    day_part: Literal["all_day", "morning", "afternoon", "evening"] = "all_day",
+    user_query: Optional[str] = None,
+    working_memory_block: str = "",
 ) -> TimelineResult:
     try:
-        start_dt, end_dt, time_desc = _build_time_filter(time_range)
+        start_dt, end_dt, time_desc = _build_time_filter(time_range, day_part)
         events = await _get_events(start_dt, end_dt)
+        logger.info(
+            "[TIME RETRIEVAL] intent=timeline range=%s start=%s end=%s "
+            "room=all event_count=%d",
+            time_desc,
+            start_dt.isoformat(),
+            end_dt.isoformat(),
+            len(events),
+        )
         if not events:
             return TimelineResult(
                 success=False,
@@ -430,7 +514,7 @@ async def get_activity_history(
 
         summary = await _summarize_with_llm(
             events,
-            f"What was I doing {time_desc}?",
+            user_query or f"What was I doing {time_desc}?",
             working_memory_block,
         )
         return TimelineResult(
@@ -453,6 +537,8 @@ async def get_room_activity(
     room_name: str,
     time_range: str = "today",
     *,
+    day_part: Literal["all_day", "morning", "afternoon", "evening"] = "all_day",
+    user_query: Optional[str] = None,
     working_memory_block: str = "",
 ) -> TimelineResult:
     try:
@@ -466,9 +552,18 @@ async def get_room_activity(
                 f"I currently monitor: {', '.join(ROOM_NAME_TO_ID.keys())}.",
             )
 
-        start_dt, end_dt, time_desc = _build_time_filter(time_range)
+        start_dt, end_dt, time_desc = _build_time_filter(time_range, day_part)
         events = await _get_events(start_dt, end_dt, room_number=room_id)
         clean_room_name = ROOMS.get(room_id, room_name)
+        logger.info(
+            "[TIME RETRIEVAL] intent=timeline range=%s start=%s end=%s "
+            "room=%s event_count=%d",
+            time_desc,
+            start_dt.isoformat(),
+            end_dt.isoformat(),
+            clean_room_name,
+            len(events),
+        )
         if not events:
             return TimelineResult(
                 success=False,
@@ -482,7 +577,8 @@ async def get_room_activity(
 
         summary = await _summarize_with_llm(
             events,
-            f"What was I doing in the {clean_room_name} during {time_desc}?",
+            user_query
+            or f"What was I doing in the {clean_room_name} during {time_desc}?",
             working_memory_block,
         )
         return TimelineResult(
@@ -505,10 +601,12 @@ async def get_recent_transcripts(
     time_range: str = "recently",
     room_name: Optional[str] = None,
     *,
+    day_part: Literal["all_day", "morning", "afternoon", "evening"] = "all_day",
+    user_query: Optional[str] = None,
     working_memory_block: str = "",
 ) -> TranscriptResult:
     try:
-        start_dt, end_dt, time_desc = _build_time_filter(time_range)
+        start_dt, end_dt, time_desc = _build_time_filter(time_range, day_part)
         room_id = _parse_room_name(room_name) if room_name else None
         room_display = ""
 
@@ -525,6 +623,15 @@ async def get_recent_transcripts(
             room_display = f" in the {ROOMS.get(room_id, room_name)}"
 
         events = await _get_events(start_dt, end_dt, room_number=room_id)
+        logger.info(
+            "[TIME RETRIEVAL] intent=transcripts range=%s start=%s end=%s "
+            "room=%s event_count=%d",
+            time_desc,
+            start_dt.isoformat(),
+            end_dt.isoformat(),
+            room_display.strip() or "all",
+            len(events),
+        )
         speech_events = [
             event
             for event in events
@@ -554,10 +661,16 @@ async def get_recent_transcripts(
             total_chars += len(transcript)
         transcripts = budgeted_transcripts
         registry = get_model_registry()
+        exact_question = user_query or f"What was I talking about during {time_desc}?"
         prompt = with_monitoring_evidence_context(
+            f'Question: "{exact_question}"\n'
             f"Transcripts from {time_desc}{room_display}:\n"
             + "\n".join(f"- {entry}" for entry in transcripts)
-            + "\n\nSummarize the main topics kindly and clearly in 2-3 sentences."
+            + "\n\nAnswer the exact question, not every topic in the time range. "
+            "If the question names a person or topic, use only the transcript "
+            "evidence relevant to that person or topic. Do not mention what happened "
+            "before or after the requested conversation unless the user asks. Use "
+            "the fewest sentences needed (normally 1-2)."
         )
         summary = await invoke_text(
             prompt=prompt,
@@ -565,7 +678,9 @@ async def get_recent_transcripts(
                 with_patient_answer_context(
                     "You help a dementia patient remember what they were talking about. "
                     "Be warm, concise, and grounded in the transcript. Prefer the actual "
-                    "audio transcript over video descriptions for speech questions."
+                    "audio transcript over video descriptions for speech questions. "
+                    "Answer only the requested conversation, person, or topic and omit "
+                    "unrelated neighboring events."
                 ),
                 working_memory_block,
             ),
@@ -699,10 +814,10 @@ async def check_activity(
 async def _plan_time_query(query: str) -> TimeQueryPlan:
     deterministic_plan = _deterministic_time_plan(query)
     if deterministic_plan is not None:
-        return deterministic_plan
+        return _apply_explicit_time_scope(query, deterministic_plan)
 
     registry = get_model_registry()
-    return await invoke_structured(
+    plan = await invoke_structured(
         prompt=query,
         output_model=TimeQueryPlan,
         system_prompt=with_patient_cctv_context(
@@ -715,13 +830,15 @@ async def _plan_time_query(query: str) -> TimeQueryPlan:
         model_id=registry.router,
         structured_output_prompt=(
             "Extract the intent, time range, optional room name, optional activity, "
-            "and hours if the user is asking to verify an activity. Use YYYY-MM-DD "
-            "for explicit calendar dates. Choose transcripts for questions like "
+            "day_part (all_day, morning, afternoon, or evening), and hours if the "
+            "user is asking to verify an activity. Preserve explicitly requested "
+            "day-parts. Use YYYY-MM-DD for explicit calendar dates. Choose transcripts for questions like "
             "'what was I talking about today', 'what was I saying today', and "
             "'did I talk about X today'."
         ),
         max_tokens=300,
     )
+    return _apply_explicit_time_scope(query, plan)
 
 
 async def run_time_query(
@@ -729,10 +846,20 @@ async def run_time_query(
 ) -> TimeResult:
     try:
         plan = await _plan_time_query(query)
+        logger.info(
+            "[TIME PLAN] intent=%s time_range=%s day_part=%s room=%s hours=%d",
+            plan.intent,
+            plan.time_range,
+            plan.day_part,
+            plan.room_name or "all",
+            plan.hours,
+        )
         if plan.intent == "transcripts":
             result = await get_recent_transcripts(
                 time_range=plan.time_range,
                 room_name=plan.room_name,
+                day_part=plan.day_part,
+                user_query=query,
                 working_memory_block=working_memory_block,
             )
             return TimeResult(
@@ -759,11 +886,15 @@ async def run_time_query(
                 result = await get_room_activity(
                     room_name=plan.room_name,
                     time_range=plan.time_range,
+                    day_part=plan.day_part,
+                    user_query=query,
                     working_memory_block=working_memory_block,
                 )
             else:
                 result = await get_activity_history(
                     time_range=plan.time_range,
+                    day_part=plan.day_part,
+                    user_query=query,
                     working_memory_block=working_memory_block,
                 )
 

@@ -35,6 +35,7 @@ Storage/
 Proof/
 References/
 text_scripts_for_video/
+/hidden-data/
 
 # Local agent, editor, and OS files
 SESSIONS.md

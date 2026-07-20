@@ -50,7 +50,9 @@ Full-video Qwen analysis uses a private Alibaba OSS presigned URL because inline
 
 ## Architecture
 
-![Project Memoria Architecture](Demo/Project%20Memoria%20Gemma%20Architecture%20v2.png)
+![Project Memoria Qwen Cloud Architecture](Demo/memoria-architecture-qwen.png)
+
+For the full component-level view — all five layers, the agents in each, and the MongoDB collections — see the [detailed architecture diagram](Demo/memoria-architecture-qwen-detailed.png).
 
 At a high level:
 
@@ -59,9 +61,11 @@ At a high level:
 3. `Blue_dream_agents/consolidator.py` normalizes evidence and writes memory events to MongoDB.
 4. `Blue_dream_agents/semantic_search.py` and `Blue_dream_agents/vector_store.py` maintain the ChromaDB semantic index.
 5. `Blue_dream_agents/api.py` serves the web UI, mobile-compatible APIs, and static media.
-6. `Blue_dream_agents/jeeves.py` routes patient queries through object, time, semantic, and general response flows.
+6. `Blue_dream_agents/jeeves.py` routes patient queries through object, time, semantic, reminder, and general response flows.
 7. `Blue_dream_agents/safety_agent.py` and `Blue_dream_agents/alert_service.py` support safety decisions and alert records.
 8. `Blue_dream_agents/proactive_service.py` deduplicates, expires, and globally delivers agent-initiated patient messages.
+9. `Blue_dream_agents/conversation_memory.py`, `profile_memory.py`, `reminder_service.py`, and `memory_lifecycle.py` maintain durable conversation memory, profile facts, reminders, and the importance/consolidation/budgeted-recall lifecycle.
+10. `Blue_dream_agents/oss_media.py` bridges each recorded video to Qwen video understanding through a short-lived presigned OSS URL; `Blue_dream_agents/web_push.py` sends standards-based Web Push wake-ups for proactive messages.
 
 ## Current Stack
 

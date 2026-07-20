@@ -411,8 +411,10 @@ async def _summarize_matches(query: str, matches: list[SemanticMatch]) -> str:
     prompt = with_monitoring_evidence_context(
         f'User question: "{query}"\n'
         f"Relevant packed memories:\n{json.dumps(context, indent=2)}\n\n"
-        "Answer in 2-3 short sentences. Be specific, grounded, and mention uncertainty "
-        "if the memories are only a partial match."
+        "Answer only the exact time, person, topic, or activity asked about, using "
+        "the fewest sentences needed. Do not volunteer neighboring events or turn a "
+        "focused question into a broader timeline. Be specific, grounded, and mention "
+        "uncertainty if the memories are only a partial match."
     )
     return await invoke_text(
         prompt=prompt,
@@ -420,7 +422,8 @@ async def _summarize_matches(query: str, matches: list[SemanticMatch]) -> str:
             "You are a memory assistant for a dementia-support system. Answer only "
             "from the supplied memory events and do not fabricate details. Speak "
             "directly to the patient as 'you' when generic monitoring evidence "
-            "describes the patient."
+            "describes the patient. Omit unrelated events before or after the answer "
+            "unless the user explicitly asks for a chronology."
         ),
         model_id=registry.synthesis,
         max_tokens=500,

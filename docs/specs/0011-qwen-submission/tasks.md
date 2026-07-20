@@ -7,7 +7,9 @@
 ## Implementation Tasks
 
 - [ ] Rewrite root `README.md` per the design structure (track mapping table, Qwen model list, Alibaba proof links, honest fallback scope, tested setup steps, post-May-26 changelog).
-- [ ] Produce `Demo/memoria-architecture-qwen.png`.
+- [x] Produce `Demo/memoria-architecture-qwen.png` with editable `Demo/memoria-architecture-qwen.svg` source.
+- [x] Patch the rehearsal-discovered recall scope bug: preserve exact questions,
+  apply calendar day-part filters, and prevent unrelated before/after narration.
 - [ ] Draft Devpost text description + judge testing notes in `docs/SUBMISSIONS.md`.
 - [ ] Full clean-start rehearsal of every demo beat; fix-or-cut failures.
 - [ ] Record, edit (<3:00), upload public YouTube video; verify incognito playback.
