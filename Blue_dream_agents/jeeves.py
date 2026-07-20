@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import json
 import logging
 import re
@@ -21,9 +22,15 @@ try:
     from .media_paths import to_url_path
     from .object_detector import run_object_query
     from .profile_memory import render_profile_block, render_unpinned_profile_block
-    from .reminder_service import render_today_reminder_block
+    from .reminder_service import (
+        ReminderCreate,
+        ReminderExtraction,
+        create_reminder,
+        render_today_reminder_block,
+    )
     from .semantic_search import SemanticSearchResult, run_semantic_retrieval
     from .time_agent import TimeWindowContext, get_time_window_context, run_time_query
+    from .timezone_utils import now_local, to_local
 except ImportError:
     from llm.model_registry import get_model_registry
     from llm.prompt_context import (
@@ -35,9 +42,15 @@ except ImportError:
     from media_paths import to_url_path
     from object_detector import run_object_query
     from profile_memory import render_profile_block, render_unpinned_profile_block
-    from reminder_service import render_today_reminder_block
+    from reminder_service import (
+        ReminderCreate,
+        ReminderExtraction,
+        create_reminder,
+        render_today_reminder_block,
+    )
     from semantic_search import SemanticSearchResult, run_semantic_retrieval
     from time_agent import TimeWindowContext, get_time_window_context, run_time_query
+    from timezone_utils import now_local, to_local
 
 
 class JeevesResponse(BaseModel):
@@ -58,7 +71,7 @@ class JeevesResponse(BaseModel):
 
 
 class QueryRoute(BaseModel):
-    intent: Literal["object", "time", "semantic", "general"] = "general"
+    intent: Literal["object", "time", "semantic", "general", "reminder"] = "general"
     reason: str = ""
 
 
@@ -230,7 +243,10 @@ async def _route_query(query: str) -> QueryRoute:
             "Choose 'semantic' for fuzzy recall about what was said, discussed, "
             "wanted, or why something was mentioned when the user is not mainly "
             "asking for a timeline or activity history. "
-            "Choose 'general' for greetings or normal assistant chat."
+            "Choose 'general' for greetings or normal assistant chat. "
+            "Choose 'reminder' only when the user explicitly asks to be reminded "
+            "or to set, create, or schedule a reminder, such as 'remind me to take "
+            "my pills at 3pm'."
         ),
         model_id=registry.router,
         structured_output_prompt=(
@@ -240,7 +256,8 @@ async def _route_query(query: str) -> QueryRoute:
             "conversational memory questions like 'what did I say/discuss/mention' "
             "unless the user is clearly asking for a transcript over a day, date, "
             "or recent time range. Use time for 'what was I talking about today' "
-            "and 'did I talk about X today'."
+            "and 'did I talk about X today'. Questions about whether something "
+            "already happened are never 'reminder'."
         ),
         max_tokens=300,
     )
@@ -489,7 +506,8 @@ async def _handle_general_query(
         "Answer naturally and do not promise unsupported features. You may "
         "use the short-term conversation context and durable profile facts to "
         "understand follow-up messages, but do not treat conversation context "
-        "as stored monitoring evidence."
+        "as stored monitoring evidence. You can set reminders for the patient; "
+        "never claim you cannot set reminders."
     )
     if working_memory_block:
         system_prompt = f"{system_prompt}\n\n{working_memory_block}"
@@ -508,8 +526,122 @@ async def _handle_general_query(
     )
 
 
+def _confirmation_text(
+    extraction: ReminderExtraction,
+    *,
+    now: Optional[dt.datetime] = None,
+) -> str:
+    reminder_text = " ".join((extraction.text or "").split()).rstrip(".!?")
+    if extraction.trigger_type == "event":
+        condition = " ".join(
+            ((extraction.event_trigger.condition if extraction.event_trigger else "") or "").split()
+        ).rstrip(".!?")
+        return (
+            f"Of course. I'll remind you to {reminder_text} when I notice "
+            f"{condition}."
+        )
+
+    due_at = to_local(extraction.due_at)
+    current = to_local(now or now_local())
+    if due_at.date() == current.date():
+        due_phrase = "today"
+    elif due_at.date() == current.date() + dt.timedelta(days=1):
+        due_phrase = "tomorrow"
+    else:
+        due_phrase = f"on {due_at.strftime('%A, %b')} {due_at.day}"
+    due_time = due_at.strftime("%I:%M %p").lstrip("0")
+    confirmation = (
+        f"Of course. I'll remind you to {reminder_text} {due_phrase} at {due_time}."
+    )
+    if extraction.recurrence == "daily":
+        confirmation += " I'll repeat it every day."
+    return confirmation
+
+
+async def _handle_reminder_query(
+    query: str,
+    *,
+    session_id: Optional[str] = None,
+    conversation_context: Optional[str] = None,
+) -> JeevesResponse:
+    try:
+        now = now_local()
+        extraction = await invoke_structured(
+            prompt={
+                "now": now.isoformat(),
+                "timezone": str(now.tzinfo),
+                "user_message": query,
+            },
+            output_model=ReminderExtraction,
+            system_prompt=(
+                "Detect explicit reminder requests and extract their real details. "
+                "Resolve relative times in the supplied project timezone. For an "
+                "explicitly morning-ish event request use 06:00 through 11:00. "
+                "When the user gives no time constraint for an event reminder, use "
+                "the full-day window 00:00 through 23:59."
+            ),
+            model_id=get_model_registry().router,
+            structured_output_prompt=(
+                "For non-reminder requests set is_reminder=false. Time reminders "
+                "require due_at. Event reminders require a behavior condition, "
+                "local HH:MM window, optional room, and valid_date for phrases such "
+                "as tomorrow."
+            ),
+            max_tokens=500,
+            task="router",
+        )
+        if not extraction.is_reminder:
+            response = await _handle_general_query(
+                query,
+                conversation_context=conversation_context,
+            )
+            response.data = {
+                "route_intent": "reminder",
+                "reminder_fallback": True,
+            }
+            return response
+
+        reminder = ReminderCreate(
+            text=extraction.text or "",
+            trigger_type=extraction.trigger_type or "time",
+            due_at=extraction.due_at,
+            recurrence=extraction.recurrence,
+            event_trigger=extraction.event_trigger,
+        )
+        created = await create_reminder(
+            reminder,
+            source="chat",
+            origin_context={
+                "session_id": session_id,
+                "created_from_text": query,
+            },
+        )
+        return JeevesResponse(
+            response_type="general",
+            text=_confirmation_text(extraction, now=now),
+            image_path=None,
+            data={
+                "route_intent": "reminder",
+                "reminder": created,
+            },
+        )
+    except Exception:
+        logger.exception("Reminder query handling failed")
+        return JeevesResponse(
+            response_type="general",
+            text=(
+                "I had a little trouble saving that reminder just now. "
+                "Could you ask me again in a moment?"
+            ),
+            image_path=None,
+            data={"route_intent": "reminder", "reminder_failed": True},
+        )
+
+
 async def run_single_query(
-    query: str, conversation_context: Optional[str] = None
+    query: str,
+    conversation_context: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> JeevesResponse:
     try:
         resolved_query, conversation_resolution = await _resolve_query_with_context(
@@ -595,6 +727,19 @@ async def run_single_query(
             )
             if response.data is None:
                 response.data = {}
+            response.data["route_reason"] = route.reason
+            response.data.update(conversation_data)
+            return response
+
+        if route.intent == "reminder":
+            logger.info("[TOOL CALL] Reminder creation for: '%s'", resolved_query)
+            response = await _handle_reminder_query(
+                resolved_query,
+                session_id=session_id,
+                conversation_context=conversation_context,
+            )
+            if response.data is None:
+                response.data = {"route_intent": "reminder"}
             response.data["route_reason"] = route.reason
             response.data.update(conversation_data)
             return response

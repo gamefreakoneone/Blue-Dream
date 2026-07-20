@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, mediaUrl } from "../api";
 import { Icon } from "../icons";
 
@@ -10,7 +10,7 @@ export function SafetyScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const payload = await api.listAlerts();
       const patientAlerts = (payload.alerts || []).filter((alert) => !isGeofence(alert));
@@ -19,8 +19,17 @@ export function SafetyScreen() {
       setError("");
     } catch (requestError) { setError(requestError.message); }
     finally { setLoading(false); }
-  };
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const refreshIfVisible = () => { if (!document.hidden) load(); };
+    const interval = window.setInterval(refreshIfVisible, 30_000);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }, [load]);
   const selected = useMemo(() => alerts.find((alert) => alert.alert_id === selectedId) || null, [alerts, selectedId]);
 
   const acknowledge = async () => {

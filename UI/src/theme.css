@@ -41,6 +41,7 @@ img { max-width: 100%; }
 .brand img { width: 48px; height: 48px; object-fit: cover; border-radius: 15px; }
 .topbar-date { justify-self: center; margin: 0; font-size: 17px; font-weight: 650; white-space: nowrap; }
 .topbar .icon-button { justify-self: end; }
+.topbar-actions { justify-self: end; display: flex; gap: 8px; }
 .icon-button { width: 50px; height: 50px; border-radius: 50%; border: 1px solid var(--line); background: #eef6f1; display: grid; place-items: center; cursor: pointer; transition: transform .18s ease, background .18s ease; }
 .icon-button:hover { transform: translateY(-1px); background: var(--mint-strong); }
 
@@ -124,6 +125,8 @@ img { max-width: 100%; }
 .morning_report .proactive-label { color: #966106; }
 .proactive-text { margin: 0; font-size: 20px; line-height: 1.48; }
 .proactive-image { margin-top: 14px; max-height: 340px; }
+.proactive-ack { margin-top: 15px; }
+.proactive-confirmation { margin: 15px 0 0; color: var(--emerald-dark); font-weight: 700; line-height: 1.4; }
 .arrival-highlight { animation: proactive-in .5s cubic-bezier(.15,.8,.2,1) both, arrival-glow 1.3s ease 2; }
 .typing-row { display: flex; align-items: center; gap: 10px; }
 .typing-bubble { height: 49px; display: flex; align-items: center; gap: 5px; padding: 0 18px; border: 1px solid #c4e3d2; border-radius: 20px 20px 20px 7px; background: var(--mint); }
@@ -155,7 +158,9 @@ img { max-width: 100%; }
 .reminder-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 13px; min-height: 90px; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 20px; box-shadow: 0 5px 18px rgba(20, 53, 42, .045); }
 .reminder-card h3 { margin: 0 0 5px; font-size: 19px; line-height: 1.3; }
 .reminder-card p { margin: 0; color: var(--blue); font-size: 14px; line-height: 1.35; }
+.reminder-actions { display: flex; align-items: center; gap: 4px; }
 .done-button { min-height: 46px; padding: 0 14px; color: var(--emerald-dark); background: var(--mint); border: 1px solid var(--mint-strong); }
+.reminder-actions .hide-button:disabled { cursor: wait; opacity: .58; }
 
 /* Safety */
 .safety-layout { display: grid; gap: 16px; }
@@ -199,6 +204,7 @@ img { max-width: 100%; }
 .summary-date time { font-size: 18px; font-weight: 760; }
 .summary-date span { color: var(--emerald); font-size: 14px; font-weight: 680; }
 .summary-card > p { margin: 15px 1px 11px; font-size: 18px; line-height: 1.55; }
+.digest-highlights { display: grid; gap: 7px; margin: 0 0 13px; padding-left: 24px; color: var(--emerald-dark); line-height: 1.45; }
 .summary-card > small { color: var(--muted); font-size: 13px; }
 .summary-empty { min-height: 190px; }
 
@@ -256,7 +262,7 @@ img { max-width: 100%; }
   .proactive-label { font-size: 19px; }
   .proactive-text { font-size: 18px; }
   .reminder-card { grid-template-columns: auto 1fr; }
-  .reminder-card .done-button { grid-column: 2; width: fit-content; }
+  .reminder-actions { grid-column: 2; flex-wrap: wrap; }
   .form-pair { grid-template-columns: 1fr; }
   .recall-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .bottom-nav a { font-size: 12px; }

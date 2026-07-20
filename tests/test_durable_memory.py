@@ -211,37 +211,22 @@ def test_conversation_summary_trims_only_after_success(monkeypatch):
     assert failing_collection.documents[0]["summary"] == ""
 
 
-def test_combined_extraction_stores_fact_and_chat_reminder(monkeypatch):
+def test_profile_extraction_stores_fact_without_creating_reminder(monkeypatch):
     collection = FakeCollection()
-    reminders = []
 
-    async def record_reminder(reminder, **kwargs):
-        reminders.append((reminder, kwargs))
-        return {"reminder_id": "r1"}
+    async def unexpected_reminder(*args, **kwargs):
+        raise AssertionError("profile extraction must not create reminders")
 
     responses = iter(
         [
-            profile_memory.TurnMemoryExtraction(
+            profile_memory.ProfileFactExtraction(
                 facts=[
                     profile_memory.ExtractedFact(
                         category="person",
                         text="The patient's daughter is Sarah.",
                         confidence=0.95,
                     )
-                ],
-                reminder={
-                    "is_reminder": True,
-                    "text": "Take the water bottle",
-                    "trigger_type": "event",
-                    "recurrence": "none",
-                    "event_trigger": {
-                        "room_number": 1,
-                        "window_start": "06:00",
-                        "window_end": "11:00",
-                        "condition": "leaving for a walk",
-                        "valid_date": "2026-07-19",
-                    },
-                },
+                ]
             ),
             profile_memory.FactDedupDecision(action="add"),
         ]
@@ -251,9 +236,8 @@ def test_combined_extraction_stores_fact_and_chat_reminder(monkeypatch):
         return next(responses)
 
     monkeypatch.setattr(profile_memory, "invoke_structured", structured)
-    service = profile_memory.ProfileMemoryService(
-        collection, reminder_creator=record_reminder
-    )
+    monkeypatch.setattr(reminder_service, "create_reminder", unexpected_reminder)
+    service = profile_memory.ProfileMemoryService(collection)
     _run(
         service.extract_and_store(
             "When I leave tomorrow, remind me to take my water bottle. My daughter is Sarah.",
@@ -263,23 +247,19 @@ def test_combined_extraction_stores_fact_and_chat_reminder(monkeypatch):
     )
 
     assert collection.documents[0]["text"].endswith("Sarah.")
-    reminder, metadata = reminders[0]
-    assert reminder.trigger_type == "event"
-    assert reminder.event_trigger.room_number == 1
-    assert metadata["source"] == "chat"
-    assert metadata["origin_context"]["session_id"] == "session-a"
+    assert len(collection.documents) == 1
 
 
 def test_exact_repeated_turn_is_idempotent_across_category_drift(monkeypatch):
     collection = FakeCollection()
-    first = profile_memory.TurnMemoryExtraction(
+    first = profile_memory.ProfileFactExtraction(
         facts=[
             profile_memory.ExtractedFact(
                 category="person", text="Daughter Sarah visits Sundays", confidence=0.9
             )
         ]
     )
-    repeated_with_drift = profile_memory.TurnMemoryExtraction(
+    repeated_with_drift = profile_memory.ProfileFactExtraction(
         facts=[
             profile_memory.ExtractedFact(
                 category="routine", text="Sarah visits every Sunday", confidence=0.9
@@ -588,9 +568,15 @@ def test_reminder_round_trip_due_boundary_and_daily_rollover():
     assert event["event_trigger"]["valid_date"] == "2026-07-19"
     assert event["event_trigger"]["room_number"] == 1
     assert _run(service.mark_done(event["reminder_id"], mode="delivery")) is True
+    stored_event = next(
+        document
+        for document in collection.documents
+        if document["reminder_id"] == event["reminder_id"]
+    )
+    assert stored_event["status"] == "done"
 
 
-def test_patient_completion_archives_daily_reminder():
+def test_patient_completion_rolls_daily_reminder_forward():
     collection = FakeCollection()
     service = ReminderService(collection)
     due = dt.datetime(2026, 7, 18, 8, tzinfo=LOCAL_TZ)
@@ -604,9 +590,46 @@ def test_patient_completion_archives_daily_reminder():
         service.mark_done(created["reminder_id"], mode="patient", now=due)
     ) is True
     stored = collection.documents[0]
-    assert stored["status"] == "archived"
-    assert stored["archived_at"] == due
-    assert stored["due_at"] == due
+    assert stored["status"] == "active"
+    assert stored["last_completed_at"] == due
+    assert stored["due_at"] == due + dt.timedelta(days=1)
+
+
+def test_patient_completion_archives_one_shot_and_archive_is_idempotent():
+    collection = FakeCollection()
+    service = ReminderService(collection)
+    now = dt.datetime(2026, 7, 18, 8, tzinfo=LOCAL_TZ)
+    one_shot = _run(service.create(ReminderCreate(text="Call Sarah", due_at=now)))
+
+    assert _run(
+        service.mark_done(one_shot["reminder_id"], mode="patient", now=now)
+    ) is True
+    assert collection.documents[0]["status"] == "archived"
+    assert collection.documents[0]["completed_at"] == now
+
+    active = _run(
+        service.create(
+            ReminderCreate(
+                text="Take water bottle",
+                trigger_type="event",
+                event_trigger=EventTrigger(
+                    window_start="06:00",
+                    window_end="11:00",
+                    condition="leaving for a walk",
+                ),
+            )
+        )
+    )
+    assert _run(service.archive(active["reminder_id"], now=now)) is True
+    archived = next(
+        document
+        for document in collection.documents
+        if document["reminder_id"] == active["reminder_id"]
+    )
+    assert archived["status"] == "archived"
+    assert archived["archived_at"] == now
+    assert _run(service.archive(active["reminder_id"], now=now)) is False
+    assert _run(service.archive("missing", now=now)) is False
 
 
 def test_today_reminders_are_indexed_ordered_and_capped(monkeypatch):
@@ -794,6 +817,7 @@ def test_new_endpoint_contracts(client, monkeypatch, api_module):
     monkeypatch.setattr(api_module, "list_active_reminders", reminders)
     monkeypatch.setattr(api_module, "create_reminder", create)
     monkeypatch.setattr(api_module, "mark_done", true_for_known)
+    monkeypatch.setattr(api_module, "archive_reminder", true_for_known)
 
     assert client.get("/memory/profile").json()["facts"][0]["fact_id"] == "fact-1"
     assert client.post("/memory/profile/fact-1/pin").json() == {"ok": True}
@@ -811,6 +835,8 @@ def test_new_endpoint_contracts(client, monkeypatch, api_module):
     assert client.post("/reminders/reminder-1/done").json() == {"ok": True}
     assert completion_modes == ["patient"]
     assert client.post("/reminders/missing/done").status_code == 404
+    assert client.post("/reminders/reminder-1/archive").json() == {"ok": True}
+    assert client.post("/reminders/missing/archive").status_code == 404
 
     invalid = client.post(
         "/reminders",

@@ -37,6 +37,8 @@ export const api = {
     apiRequest("/reminders", { method: "POST", body: JSON.stringify(value) }),
   completeReminder: (reminderId) =>
     apiRequest(`/reminders/${encodeURIComponent(reminderId)}/done`, { method: "POST" }),
+  archiveReminder: (reminderId) =>
+    apiRequest(`/reminders/${encodeURIComponent(reminderId)}/archive`, { method: "POST" }),
   listAlerts: () => apiRequest("/alerts/patient?status=open"),
   acknowledgeAlert: (alertId, action = "ok") =>
     apiRequest(`/alerts/${encodeURIComponent(alertId)}/ack`, {
@@ -50,6 +52,7 @@ export const api = {
   archiveFact: (factId) =>
     apiRequest(`/memory/profile/${encodeURIComponent(factId)}/archive`, { method: "POST" }),
   summaries: (days = 7) => apiRequest(`/memory/summaries?days=${days}`),
+  digest: (days = 7) => apiRequest(`/memory/digest?days=${days}`),
   consolidate: () => apiRequest("/memory/consolidate", { method: "POST" }),
   simulateExit: (body) =>
     apiRequest("/geofence/events", { method: "POST", body: JSON.stringify(body) }),

@@ -7,7 +7,7 @@ import { ProactiveBubble } from "../components/ProactiveBubble";
 import { NotificationCard } from "../components/NotificationCard";
 import { playSoftChime, showInPageNotifications } from "../proactiveFeedback";
 
-export function ChatScreen({ sessionId, messages, onMessages, pushState, onPushState }) {
+export function ChatScreen({ sessionId, messages, onMessages, onSafetyAcknowledged, pushState, onPushState }) {
   const [text, setText] = useState("");
   const [typing, setTyping] = useState(false);
   const endRef = useRef(null);
@@ -62,7 +62,7 @@ export function ChatScreen({ sessionId, messages, onMessages, pushState, onPushS
       <NotificationCard state={pushState} onStateChange={onPushState} />
       <div className="message-list" aria-live="polite">
         {messages.map((message) => message.kind === "proactive" ? (
-          <ProactiveBubble key={message.message_id} message={message} highlighted={message.message_id === highlightedId} />
+          <ProactiveBubble key={message.message_id} message={message} highlighted={message.message_id === highlightedId} onSafetyAcknowledged={onSafetyAcknowledged} />
         ) : (
           <ChatMessage key={message.id} message={message} />
         ))}

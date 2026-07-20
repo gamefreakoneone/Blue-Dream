@@ -16,7 +16,20 @@ def test_legacy_query_body_returns_jeeves_contract(client):
     assert set(response.json()) == {"response_type", "text", "image_path", "data"}
 
 
-def test_query_accepts_session_id(client):
+def test_query_accepts_session_id(client, monkeypatch, api_module):
+    from Blue_dream_agents.jeeves import JeevesResponse
+
+    captured = {}
+
+    async def query(query, conversation_context=None, session_id=None):
+        captured.update(
+            query=query,
+            conversation_context=conversation_context,
+            session_id=session_id,
+        )
+        return JeevesResponse(response_type="general", text="Okay")
+
+    monkeypatch.setattr(api_module, "run_single_query", query)
     response = client.post(
         "/query",
         json={"query": "What happened?", "session_id": "session-1"},
@@ -24,6 +37,11 @@ def test_query_accepts_session_id(client):
 
     assert response.status_code == 200
     assert response.json()["response_type"] == "general"
+    assert captured == {
+        "query": "What happened?",
+        "conversation_context": "",
+        "session_id": "session-1",
+    }
 
 
 def test_conversation_reset_contract(client):
@@ -64,7 +82,7 @@ def test_api_wrapper_failure_keeps_status_and_hides_detail(
     monkeypatch,
     api_module,
 ):
-    async def fail_query(query, conversation_context=None):
+    async def fail_query(query, conversation_context=None, session_id=None):
         raise RuntimeError("SENTINEL_API_SECRET")
 
     monkeypatch.setattr(api_module, "run_single_query", fail_query)
@@ -114,6 +132,11 @@ def test_lifespan_initializes_and_closes_clients(monkeypatch, api_module):
     )
     monkeypatch.setattr(
         api_module,
+        "ensure_memory_digest_indexes",
+        lambda: record("digests"),
+    )
+    monkeypatch.setattr(
+        api_module,
         "initialize_proactive_indexes",
         lambda: record("proactive"),
     )
@@ -144,6 +167,7 @@ def test_lifespan_initializes_and_closes_clients(monkeypatch, api_module):
         "profile",
         "reminders",
         "lifecycle",
+        "digests",
         "proactive",
         "push",
         "llm-close",

@@ -79,6 +79,11 @@ def get_memory_summaries_collection():
     return get_mongo_client().dementia_assistance.memory_summaries
 
 
+def get_memory_digests_collection():
+    """Return the rebuildable patient-facing daily digest cache."""
+    return get_mongo_client().dementia_assistance.memory_digests
+
+
 def get_proactive_messages_collection():
     """Return the durable agent-initiated message collection."""
     return get_mongo_client().dementia_assistance.proactive_messages
@@ -121,6 +126,14 @@ async def ensure_memory_lifecycle_indexes() -> None:
     await summaries.create_index(
         [("date", -1), ("room_number", 1)],
         name="date_-1_room_number_1",
+    )
+
+
+async def ensure_memory_digest_indexes() -> None:
+    """Create the unique cache key used by daily patient digests."""
+
+    await get_memory_digests_collection().create_index(
+        [("date", 1)], name="date_1", unique=True
     )
 
 

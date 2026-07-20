@@ -39,6 +39,7 @@ try:
         ensure_profile_indexes,
         ensure_push_indexes,
         ensure_reminder_indexes,
+        ensure_memory_digest_indexes,
         ensure_memory_lifecycle_indexes,
         get_memory_summaries_collection,
         get_push_subscriptions_collection,
@@ -47,6 +48,7 @@ try:
     from .llm.client import close_llm_clients
     from .llm.settings import get_provider_settings, load_project_env
     from .media_paths import normalize_stored_path, to_fs_path, to_url_path
+    from .memory_digest import get_daily_digests
     from .memory_lifecycle import pin_event, run_consolidation, unpin_event
     from .profile_memory import (
         archive_fact,
@@ -62,6 +64,7 @@ try:
     )
     from .reminder_service import (
         ReminderCreate,
+        archive_reminder,
         create_reminder,
         list_active as list_active_reminders,
         mark_done,
@@ -91,6 +94,7 @@ except ImportError:
         ensure_profile_indexes,
         ensure_push_indexes,
         ensure_reminder_indexes,
+        ensure_memory_digest_indexes,
         ensure_memory_lifecycle_indexes,
         get_memory_summaries_collection,
         get_push_subscriptions_collection,
@@ -99,6 +103,7 @@ except ImportError:
     from llm.client import close_llm_clients
     from llm.settings import get_provider_settings, load_project_env
     from media_paths import normalize_stored_path, to_fs_path, to_url_path
+    from memory_digest import get_daily_digests
     from memory_lifecycle import pin_event, run_consolidation, unpin_event
     from profile_memory import (
         archive_fact,
@@ -114,6 +119,7 @@ except ImportError:
     )
     from reminder_service import (
         ReminderCreate,
+        archive_reminder,
         create_reminder,
         list_active as list_active_reminders,
         mark_done,
@@ -164,6 +170,7 @@ async def lifespan(app: FastAPI):
         await ensure_profile_indexes()
         await ensure_reminder_indexes()
         await ensure_memory_lifecycle_indexes()
+        await ensure_memory_digest_indexes()
         await initialize_proactive_indexes()
         await ensure_push_indexes()
     except Exception as exc:
@@ -299,6 +306,7 @@ async def query_jeeves(request: QueryRequest):
         response = await run_single_query(
             request.query,
             conversation_context=conversation_context,
+            session_id=request.session_id,
         )
         await append_conversation_turn(request.session_id, "user", request.query)
         await append_conversation_turn(request.session_id, "assistant", response.text)
@@ -406,6 +414,18 @@ async def get_memory_summaries(days: int = Query(default=7, ge=1, le=365)):
         raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 
+@app.get("/memory/digest")
+async def get_memory_digest(
+    days: int = Query(default=7, ge=1, le=31),
+    force: bool = Query(default=False),
+):
+    try:
+        return {"digests": await get_daily_digests(days, force=force)}
+    except Exception:
+        logger.exception("Daily memory digest endpoint failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
 @app.post("/memory/events/{event_id}/pin")
 async def pin_memory_event(event_id: str):
     try:
@@ -463,6 +483,19 @@ async def complete_reminder(reminder_id: str):
         raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
 
 
+@app.post("/reminders/{reminder_id}/archive")
+async def archive_patient_reminder(reminder_id: str):
+    try:
+        if not await archive_reminder(reminder_id):
+            raise HTTPException(status_code=404, detail="Reminder not found")
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Reminder archive failed")
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_DETAIL)
+
+
 @app.get("/proactive/pending")
 async def get_proactive_messages(session_id: Optional[str] = None):
     try:
@@ -493,6 +526,7 @@ async def get_proactive_messages(session_id: Optional[str] = None):
             "image_path",
             "action",
             "created_at",
+            "related_id",
         )
         public_messages = []
         for message in messages:

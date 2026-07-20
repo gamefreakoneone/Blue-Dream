@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import hashlib
-from typing import Any, Awaitable, Callable, Literal, Optional
+from typing import Any, Literal, Optional
 
 from bson import ObjectId
 from pydantic import BaseModel, Field, field_validator
@@ -12,17 +12,11 @@ try:
     from .db_client import get_profile_facts_collection
     from .llm.client import invoke_structured
     from .llm.model_registry import get_model_registry
-    from .reminder_service import (
-        ReminderCreate,
-        ReminderExtraction,
-        create_reminder,
-    )
     from .timezone_utils import now_local, to_local
 except ImportError:
     from db_client import get_profile_facts_collection
     from llm.client import invoke_structured
     from llm.model_registry import get_model_registry
-    from reminder_service import ReminderCreate, ReminderExtraction, create_reminder
     from timezone_utils import now_local, to_local
 
 
@@ -52,10 +46,6 @@ class FactDedupDecision(BaseModel):
     action: Literal["add", "update", "skip"]
     target_fact_id: Optional[str] = None
     merged_text: Optional[str] = None
-
-
-class TurnMemoryExtraction(ProfileFactExtraction):
-    reminder: ReminderExtraction = Field(default_factory=ReminderExtraction)
 
 
 def _configured_max_active_facts() -> int:
@@ -92,16 +82,12 @@ def serialize_profile_fact(document: dict[str, Any]) -> dict[str, Any]:
     return serialized
 
 
-ReminderCreator = Callable[..., Awaitable[dict[str, Any]]]
-
-
 class ProfileMemoryService:
     def __init__(
         self,
         collection=None,
         *,
         max_active_facts: Optional[int] = None,
-        reminder_creator: ReminderCreator = create_reminder,
     ):
         self._injected_collection = collection
         self.max_active_facts = (
@@ -109,7 +95,6 @@ class ProfileMemoryService:
             if max_active_facts is not None
             else _configured_max_active_facts()
         )
-        self._reminder_creator = reminder_creator
 
     @property
     def collection(self):
@@ -143,7 +128,7 @@ class ProfileMemoryService:
         assistant_text: str,
         *,
         session_id: Optional[str] = None,
-    ) -> TurnMemoryExtraction:
+    ) -> ProfileFactExtraction:
         now = now_local()
         extraction = await invoke_structured(
             prompt={
@@ -152,44 +137,19 @@ class ProfileMemoryService:
                 "user_message": user_text,
                 "assistant_reply": assistant_text,
             },
-            output_model=TurnMemoryExtraction,
+            output_model=ProfileFactExtraction,
             system_prompt=(
                 "Extract durable patient memory from one chat turn. Facts must be "
                 "stable personal information only: people and relationships, "
                 "preferences, routines, medical facts, or safety facts. Ignore "
-                "transient states and assistant claims. Also detect explicit reminder "
-                "requests. Resolve relative time in the supplied project timezone. "
-                "For an unspecified morning event window use 06:00 through 11:00."
+                "transient states and assistant claims."
             ),
             model_id=get_model_registry().router,
             structured_output_prompt=(
-                "Return facts plus one reminder object. For non-reminder turns set "
-                "is_reminder=false. Time reminders require due_at; event reminders "
-                "require a behavior condition, local HH:MM window, optional room, and "
-                "valid_date for phrases such as tomorrow."
+                "Return only the durable profile facts found in this turn."
             ),
-            max_tokens=900,
+            max_tokens=600,
         )
-
-        if extraction.reminder.is_reminder:
-            try:
-                reminder = ReminderCreate(
-                    text=extraction.reminder.text or "",
-                    trigger_type=extraction.reminder.trigger_type or "time",
-                    due_at=extraction.reminder.due_at,
-                    recurrence=extraction.reminder.recurrence,
-                    event_trigger=extraction.reminder.event_trigger,
-                )
-                await self._reminder_creator(
-                    reminder,
-                    source="chat",
-                    origin_context={
-                        "session_id": session_id,
-                        "created_from_text": user_text,
-                    },
-                )
-            except Exception:
-                logger.exception("Chat reminder persistence failed")
 
         fingerprint = _turn_fingerprint(user_text)
         already_processed = await self.collection.find_one(
@@ -350,7 +310,7 @@ async def extract_and_store(
     assistant_text: str,
     *,
     session_id: Optional[str] = None,
-) -> TurnMemoryExtraction:
+) -> ProfileFactExtraction:
     return await _default_service.extract_and_store(
         user_text, assistant_text, session_id=session_id
     )

@@ -479,6 +479,7 @@ def test_proactive_endpoint_contracts(client, monkeypatch, api_module):
                 "image_path": "/storage/highlighted/legacy-stove.jpg",
                 "action": None,
                 "created_at": now.isoformat(),
+                "related_id": "reminder-1:2026-07-18T09:00:00-07:00",
                 "status": "delivered",
             }
         ]
@@ -505,6 +506,7 @@ def test_proactive_endpoint_contracts(client, monkeypatch, api_module):
             "image_path": "/storage/highlighted/legacy-stove.jpg",
             "action": None,
             "created_at": checks[0].isoformat(),
+            "related_id": "reminder-1:2026-07-18T09:00:00-07:00",
         }
     ]
     assert appended == [("browser-1", "assistant", "Take your medicine.")]

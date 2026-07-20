@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { Icon } from "./icons";
+import { markSafetyAcknowledged } from "./messageState";
 import { getPushStatus } from "./push";
 import { ChatScreen } from "./screens/ChatScreen";
 import { RemindersScreen } from "./screens/RemindersScreen";
@@ -44,6 +45,9 @@ export default function App() {
       return [...existing, ...incoming.filter((item) => item.kind !== "proactive" || !proactiveIds.has(item.message_id))];
     });
   }, []);
+  const acknowledgeSafetyMessage = useCallback((messageId) => {
+    setMessages((existing) => markSafetyAcknowledged(existing, messageId));
+  }, []);
   const resetConversation = async () => {
     await api.resetConversation(sessionId);
     const next = newSession();
@@ -54,7 +58,7 @@ export default function App() {
   };
 
   const screens = {
-    chat: <ChatScreen sessionId={sessionId} messages={messages} onMessages={appendMessages} pushState={pushState} onPushState={setPushState} />,
+    chat: <ChatScreen sessionId={sessionId} messages={messages} onMessages={appendMessages} onSafetyAcknowledged={acknowledgeSafetyMessage} pushState={pushState} onPushState={setPushState} />,
     reminders: <RemindersScreen />,
     safety: <SafetyScreen />,
     memories: <MemoriesScreen />,
@@ -62,7 +66,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar"><a className="brand" href="#chat" aria-label="Memoria chat"><img src="/icons/icon-192.png" alt="" /><span>Memoria</span></a><p className="topbar-date">{new Date().toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })}</p><button className="icon-button" type="button" onClick={() => setSheetOpen(true)} aria-label="Caregiver and demo tools"><Icon name="settings" size={25} /></button></header>
+      <header className="topbar"><a className="brand" href="#chat" aria-label="Memoria chat"><img src="/icons/icon-192.png" alt="" /><span>Memoria</span></a><p className="topbar-date">{new Date().toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })}</p><div className="topbar-actions"><button className="icon-button" type="button" onClick={resetConversation} aria-label="Start a new conversation"><Icon name="newchat" size={25} /></button><button className="icon-button" type="button" onClick={() => setSheetOpen(true)} aria-label="Caregiver and demo tools"><Icon name="settings" size={25} /></button></div></header>
       <main>{screens[route]}</main>
       <nav className="bottom-nav" aria-label="Main navigation">{tabs.map(([value, label]) => <a key={value} className={route === value ? "active" : ""} href={`#${value}`} aria-current={route === value ? "page" : undefined}><Icon name={value} size={25} /><span>{label}</span></a>)}</nav>
       <DemoToolsSheet open={sheetOpen} onClose={() => setSheetOpen(false)} onResetConversation={resetConversation} pushState={pushState} onPushState={setPushState} />

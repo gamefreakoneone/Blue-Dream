@@ -250,13 +250,15 @@ class ReminderService:
             return False
 
         completed_at = to_local(now or now_local())
-        if (
-            mode == "delivery"
-            and document.get("trigger_type") == "time"
+        is_recurring_time = (
+            document.get("trigger_type") == "time"
             and document.get("recurrence") == "daily"
             and isinstance(document.get("due_at"), dt.datetime)
-        ):
+        )
+        if is_recurring_time:
             next_due = to_local(document["due_at"])
+            if mode == "patient" and next_due > completed_at:
+                next_due += dt.timedelta(days=1)
             while next_due <= completed_at:
                 next_due += dt.timedelta(days=1)
             update = {
@@ -285,6 +287,25 @@ class ReminderService:
             }
         result = await self.collection.update_one(
             {"reminder_id": reminder_id, "status": "active"}, update
+        )
+        return bool(result.matched_count)
+
+    async def archive(
+        self,
+        reminder_id: str,
+        *,
+        now: Optional[dt.datetime] = None,
+    ) -> bool:
+        archived_at = to_local(now or now_local())
+        result = await self.collection.update_one(
+            {"reminder_id": reminder_id, "status": "active"},
+            {
+                "$set": {
+                    "status": "archived",
+                    "archived_at": archived_at,
+                    "updated_at": archived_at,
+                }
+            },
         )
         return bool(result.matched_count)
 
@@ -348,6 +369,14 @@ async def mark_done(
     now: Optional[dt.datetime] = None,
 ) -> bool:
     return await _default_service.mark_done(reminder_id, mode=mode, now=now)
+
+
+async def archive_reminder(
+    reminder_id: str,
+    *,
+    now: Optional[dt.datetime] = None,
+) -> bool:
+    return await _default_service.archive(reminder_id, now=now)
 
 
 async def get_today_reminders(

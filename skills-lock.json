@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "skills": {
+    "openai-docs": {
+      "source": "openai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/.curated/openai-docs/SKILL.md",
+      "computedHash": "80d1836b9c7cdee24521c47e33a77cbf02b34783267f5a7e32c41557170fa6dd"
+    },
+    "qwencloud-audio-tts": {
+      "source": "qwencloud/qwencloud-ai",
+      "sourceType": "github",
+      "skillPath": "skills/audio/qwencloud-audio-tts/SKILL.md",
+      "computedHash": "a480d9e0879fe08c8fc2eb0f5476a54285e9ccb346f5981afa045247caa27a1b"
+    },
+    "qwencloud-image-generation": {
+      "source": "qwencloud/qwencloud-ai",
+      "sourceType": "github",
+      "skillPath": "skills/image/qwencloud-image-generation/SKILL.md",
+      "computedHash": "862ff2dc407b91c7083d78aac500dc51404f33289248a89a4f11dc1406473062"
+    },
+    "qwencloud-model-selector": {
+      "source": "qwencloud/qwencloud-ai",
+      "sourceType": "github",
+      "skillPath": "skills/models/qwencloud-model-selector/SKILL.md",
+      "computedHash": "67b52c1bca308cfee60d902cd78d3ab542a7781542f82db59a6df92fed2bd301"
+    },
+    "qwencloud-ops-auth": {
+      "source": "qwencloud/qwencloud-ai",
+      "sourceType": "github",
+      "skillPath": "skills/ops/qwencloud-ops-auth/SKILL.md",
+      "computedHash": "476a5d783bd7f3eb94b6d225d71b4e69b1a57c5c4268bc44438ab8a36f03ded4"
+    },
+    "qwencloud-text": {
+      "source": "qwencloud/qwencloud-ai",
+      "sourceType": "github",
+      "skillPath": "skills/text/qwencloud-text/SKILL.md",
+      "computedHash": "b0e36e0965a7be5684d445d72c9d651c43a87e67742fdbabaadd74c126a831bf"
+    },
+    "qwencloud-update-check": {
+      "source": "qwencloud/qwencloud-ai",
+      "sourceType": "github",
+      "skillPath": "skills/ops/qwencloud-update-check/SKILL.md",
+      "computedHash": "76862ea39f1a501387b3eeb9aa53388b05119bd4597f0cd8fdf3e622bd1edab4"
+    },
+    "qwencloud-usage": {
+      "source": "qwencloud/qwencloud-ai",
+      "sourceType": "github",
+      "skillPath": "skills/usage/qwencloud-usage/SKILL.md",
+      "computedHash": "eb7061b799f259188fcce2bd3836a4c2fb2ed517a5d1a325bb3148efc1e825f1"
+    },
+    "qwencloud-video-generation": {
+      "source": "qwencloud/qwencloud-ai",
+      "sourceType": "github",
+      "skillPath": "skills/video/qwencloud-video-generation/SKILL.md",
+      "computedHash": "43158cba662af47d35d361bf134ee6acae17e0501a1a07b523e85b7833098c2d"
+    },
+    "qwencloud-vision": {
+      "source": "qwencloud/qwencloud-ai",
+      "sourceType": "github",
+      "skillPath": "skills/vision/qwencloud-vision/SKILL.md",
+      "computedHash": "1e293295c66c811137cf63e888249b9957001f1706827d6995c44fa6dc3c76ba"
+    }
+  }
+}

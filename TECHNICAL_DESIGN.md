@@ -8,7 +8,7 @@ Memoria has five layers:
 
 1. **Capture** (`Capture/`) records room events on the local machine: YOLO person/fall detection, per-camera video + audio recording, final-frame screenshots, a processing queue.
 2. **Ingestion** (`Blue_dream_agents/consolidator.py`) turns a finished recording into a canonical `MemoryEvent`: video description + factual safety observations (vision model), audio transcript (ASR), importance score, safety judgment, MongoDB insert, semantic indexing.
-3. **Memory stores**: MongoDB (`dementia_assistance`) is the single source of truth — `events`, `memory_summaries`, `conversation_sessions`, `profile_facts`, `reminders`, `safety_alerts`, `proactive_messages`, `push_subscriptions`. ChromaDB is a rebuildable semantic index only.
+3. **Memory stores**: MongoDB (`dementia_assistance`) is the single source of truth — `events`, `memory_summaries`, `conversation_sessions`, `profile_facts`, `reminders`, `safety_alerts`, `proactive_messages`, `push_subscriptions`. `memory_digests` is a date-keyed, rebuildable presentation cache derived from those authoritative records. ChromaDB is a rebuildable semantic index only.
 4. **Provider layer** (`Blue_dream_agents/llm/`) is one async client speaking the OpenAI chat-completions protocol to DashScope (Qwen), OpenAI, or local Ollama, selected by `LLM_PROVIDER`.
 5. **Interaction** (`Blue_dream_agents/api.py` + `UI/`) is a Vite + React installable patient PWA built to `UI/dist`. It serves chat, proactive turns, reminders, safety, memories, alerts, and static media; Web Push wakes the service worker when the app is closed. The former Expo `Mobile/` prototype was removed by spec 0013.
 
@@ -56,9 +56,10 @@ Canonical model in `Blue_dream_agents/memory_schema.py`. Existing fields (`event
 | `POST /memory/profile/{fact_id}/pin`, `.../archive` | `{ "ok": true }` | 0006 |
 | `GET /reminders`, `POST /reminders` | reminder list / create | 0006 |
 | `POST /reminders/{reminder_id}/done` | `{ "ok": true }` | 0006 |
+| `POST /reminders/{reminder_id}/archive` | `{ "ok": true }`; 404 when unknown/inactive | 0013a |
 | `POST /memory/consolidate` | consolidation run report | 0007 |
 | `POST /memory/events/{event_id}/pin`, `.../unpin` | `{ "ok": true }` (pin re-activates + re-embeds) | 0007 |
-| `GET /proactive/pending?session_id=` | pending agent-initiated messages | 0008 |
+| `GET /proactive/pending?session_id=` | pending messages; additive `related_id` links safety messages to their alert | 0008, 0013a |
 | `POST /proactive/{message_id}/ack` | `{ "ok": true }` | 0008 |
 | `POST /voice/transcribe` | audio blob → `{ "text": ... }` | 0009 |
 | `POST /voice/speak` | `{ "text": ... }` → audio bytes | 0009 |
@@ -67,9 +68,10 @@ Canonical model in `Blue_dream_agents/memory_schema.py`. Existing fields (`event
 | `GET /push/vapid-public-key` | `{ "enabled": bool, "key": string }` | 0013 |
 | `POST /push/subscribe`, `/push/unsubscribe`, `/push/test` | Web Push subscription lifecycle / test result | 0013 |
 | `GET /memory/summaries?days=` | newest-first, JSON-safe daily memory summaries | 0013 (pulled forward from 0012) |
+| `GET /memory/digest?days=&force=` | newest-first daily narratives from the rebuildable date-keyed cache | 0013a |
 | `GET /alerts/recent?limit=` | recent alerts, all roles (caregiver dashboard) | 0012 |
 
-Existing contracts preserved: `POST /conversation/reset`, alert endpoints, geofence endpoints, `/storage` + `/capture` static mounts.
+Existing contracts preserved: `POST /query`, `POST /conversation/reset`, alert endpoints, geofence endpoints, `POST /devices/register`, `/storage` + `/capture` static mounts, and the byte-for-byte `GET /memory/summaries` response.
 
 ## Provider Architecture
 
@@ -111,13 +113,14 @@ Retrieval flow:
 
 - **Conversation memory** (`conversation_sessions`): persisted turns with automatic summarization beyond a turn limit; survives restarts; still never indexed in Chroma and never used as monitoring evidence.
 - **Profile facts** (`profile_facts`): stable personal facts extracted after chat turns, LLM-deduplicated, small enough to always inject into prompts; pin/archive via API.
-- **Reminders** (`reminders`): created from chat or API in two kinds discriminated by `trigger_type` — `time` (wall-clock `due_at`, optional daily recurrence) and `event` (fires when a matching camera event is ingested: room + local-time window + natural-language behavior condition + optional `valid_date`). Chat-created reminders carry `origin_context` (session id + original phrasing) in Mongo as an audit trail. Delivery is the proactive channel's job; `reminder_service` exposes `get_due_reminders(now)` and `get_matchable_event_reminders(now)` for it.
+- **Reminders** (`reminders`): created from chat or API in two kinds discriminated by `trigger_type` — `time` (wall-clock `due_at`, optional daily recurrence) and `event` (fires when a matching camera event is ingested: room + local-time window + natural-language behavior condition + optional `valid_date`). The Jeeves router has an additive `reminder` intent: it extracts and creates the reminder synchronously, then returns a deterministic local-time confirmation without a second LLM call. Chat-created reminders carry `origin_context` (session id + original phrasing) in Mongo as an audit trail. An event reminder with no time constraint uses 00:00–23:59; only explicitly morning-ish wording narrows it to 06:00–11:00. Delivery is the proactive channel's job; `reminder_service` exposes `get_due_reminders(now)` and `get_matchable_event_reminders(now)` for it. Marking a daily time reminder done rolls `due_at` to its next occurrence and leaves it active in both patient and delivery modes; patient one-shot and event reminders archive, while delivery one-shots preserve their existing `done` transition.
 - **Working memory**: the small always-injected context block — active profile facts plus active reminders — served by plain indexed MongoDB reads on every prompt. Deliberately *not* a file on disk (the API server and capture pipeline are separate processes, and MongoDB is the single source of truth) and *not* vector-backed (no embedding or Chroma lookup is involved; retrieval is a few milliseconds). This is the fast-recall tier for things the agent must never have to search for.
 - **Lifecycle**: importance scored at ingest; a consolidation job groups old low-importance events by day + room into `memory_summaries`, embeds the summary, removes the originals from Chroma, and marks them `consolidated` in MongoDB. Nothing is ever deleted; the time agent reads MongoDB directly and is unaffected. Pinned items never consolidate.
+- **Daily digests** (`memory_digests` cache): `DailyDigestService` builds a patient-safe narrative for each local day from that day's summaries plus active raw events, including raw-event-only days that are not yet consolidated. The cache is uniquely keyed by date and fingerprinted from the included source IDs; unchanged fingerprints make repeat reads zero-LLM, while `force=true` rebuilds. Per-day failures serve a stale cached digest when possible or omit only the failed day. The public response excludes Mongo `_id` and the internal fingerprint. Authoritative memories remain in `events` and `memory_summaries`, so this collection is always disposable and rebuildable.
 
 ## Proactive Channel
 
-`proactive_messages` records are created by triggers: safety alert stored (actionable patient warning), first sighting of the day (morning report), time reminder due, and event-triggered reminder matched (a just-ingested camera event satisfies an active event reminder's room + time window + behavior condition; LLM condition matching is gated by `EVENT_REMINDER_LLM_MATCH` with a deterministic room+window fallback). Web Push is a wake-up channel only: an insert attempts delivery to enabled patient subscriptions, while `GET /proactive/pending` remains the sole atomic pending-to-delivered claim and the sole in-app renderer. The React PWA polls every five seconds, immediately on a service-worker message, and acknowledges only after rendering. Geofence check-in messages are post-hackathon backlog; the existing geofence endpoints remain preserved contracts with no new behavior. The legacy FCM delivery code and `POST /devices/register` remain dormant compatibility surfaces after `Mobile/` removal.
+`proactive_messages` records are created by triggers: safety alert stored (actionable patient warning), first sighting of the day (morning report), time reminder due, and event-triggered reminder matched (a just-ingested camera event satisfies an active event reminder's room + time window + behavior condition; LLM condition matching is gated by `EVENT_REMINDER_LLM_MATCH` with a deterministic room+window fallback). Web Push is a wake-up channel only: an insert attempts delivery to enabled patient subscriptions, while `GET /proactive/pending` remains the sole atomic pending-to-delivered claim and the sole in-app renderer. Its payload now exposes the stored `related_id` so a rendered safety bubble can acknowledge the corresponding alert; the atomic claim semantics are unchanged. The React PWA polls every five seconds, immediately on a service-worker message, and acknowledges only after rendering. Geofence check-in messages are post-hackathon backlog; the existing geofence endpoints remain preserved contracts with no new behavior. The legacy FCM delivery code and `POST /devices/register` remain dormant compatibility surfaces after `Mobile/` removal.
 
 ## Critical Design Rules
 

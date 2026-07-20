@@ -63,7 +63,7 @@ def client(monkeypatch, api_module):
     async def noop_extraction(*args, **kwargs):
         return None
 
-    async def canned_query(query, conversation_context=None):
+    async def canned_query(query, conversation_context=None, session_id=None):
         return JeevesResponse(
             response_type="general",
             text=f"Remembered: {query}",
@@ -77,6 +77,7 @@ def client(monkeypatch, api_module):
     monkeypatch.setattr(api_module, "ensure_profile_indexes", noop)
     monkeypatch.setattr(api_module, "ensure_reminder_indexes", noop)
     monkeypatch.setattr(api_module, "ensure_memory_lifecycle_indexes", noop)
+    monkeypatch.setattr(api_module, "ensure_memory_digest_indexes", noop)
     monkeypatch.setattr(api_module, "initialize_proactive_indexes", noop)
     monkeypatch.setattr(api_module, "ensure_push_indexes", noop)
     monkeypatch.setattr(api_module, "_reminder_sweep_seconds", lambda: 0)

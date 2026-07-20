@@ -4,13 +4,23 @@ import { Icon } from "../icons";
 
 const categoryIcon = { person: "person", preference: "heart", routine: "routine", medical: "medical", safety: "safety" };
 
+function digestDayLabel(isoDate) {
+  const date = new Date(`${isoDate}T12:00:00`);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return "Today";
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+}
+
 export function MemoriesScreen() {
   const [facts, setFacts] = useState([]);
-  const [summaries, setSummaries] = useState([]);
+  const [digests, setDigests] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [summariesLoading, setSummariesLoading] = useState(true);
+  const [digestsLoading, setDigestsLoading] = useState(true);
   const [error, setError] = useState("");
-  const [summariesError, setSummariesError] = useState("");
+  const [digestsError, setDigestsError] = useState("");
 
   const load = async () => {
     try { const payload = await api.listFacts(); setFacts(payload.facts || []); setError(""); }
@@ -19,10 +29,10 @@ export function MemoriesScreen() {
   };
   useEffect(() => { load(); }, []);
   useEffect(() => {
-    api.summaries(7)
-      .then((payload) => { setSummaries(payload.summaries || []); setSummariesError(""); })
-      .catch((requestError) => setSummariesError(requestError.message))
-      .finally(() => setSummariesLoading(false));
+    api.digest(7)
+      .then((payload) => { setDigests(payload.digests || []); setDigestsError(""); })
+      .catch((requestError) => setDigestsError(requestError.message))
+      .finally(() => setDigestsLoading(false));
   }, []);
 
   const pin = async (factId) => {
@@ -49,17 +59,21 @@ export function MemoriesScreen() {
           </div>
         </article>
       ))}</div> : <div className="empty-card"><Icon name="memories" size={30} /><h2>Your shared details will appear here</h2><p>Tell Memoria about people, routines, or preferences in Chat.</p></div>}
-      <div className="section-title summaries-title"><div><h2>Your days</h2><p>Gentle room-by-room summaries from the past week.</p></div></div>
-      {summariesError && <p className="inline-error" role="status">{summariesError}</p>}
-      {summariesLoading ? <div className="soft-loading compact-loading">Gathering your recent days…</div> : summaries.length ? (
-        <div className="summary-list">{summaries.map((summary) => (
-          <article className="summary-card" key={summary.summary_id}>
-            <div className="summary-date"><span className="card-icon mint"><Icon name="sun" size={24} /></span><div><time dateTime={summary.date}>{new Date(`${summary.date}T12:00:00`).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</time><span>{summary.room_name || (summary.room_number != null ? `Room ${summary.room_number}` : "Home")}</span></div></div>
-            <p>{summary.text}</p>
-            <small>{summary.source_event_count} {summary.source_event_count === 1 ? "moment" : "moments"} remembered</small>
-          </article>
-        ))}</div>
-      ) : <div className="empty-card summary-empty"><Icon name="sun" size={30} /><h2>Your day summaries will appear here</h2><p>Memoria creates them as everyday moments collect.</p></div>}
+      <div className="section-title summaries-title"><div><h2>Your story</h2><p>One gentle note about each recent day.</p></div></div>
+      {digestsError && <p className="inline-error" role="status">{digestsError}</p>}
+      {digestsLoading ? <div className="soft-loading compact-loading">Gathering your recent days…</div> : digests.length ? (
+        <div className="summary-list">{digests.map((digest) => {
+          const momentCount = Number(digest.source_event_count || 0) + Number(digest.source_summary_count || 0);
+          return (
+            <article className="summary-card" key={digest.digest_id}>
+              <div className="summary-date"><span className="card-icon mint"><Icon name="sun" size={24} /></span><div><time dateTime={digest.date}>{digestDayLabel(digest.date)}</time></div></div>
+              <p>{digest.text}</p>
+              {digest.highlights?.length ? <ul className="digest-highlights">{digest.highlights.map((highlight) => <li key={highlight}>{highlight}</li>)}</ul> : null}
+              <small>{momentCount} {momentCount === 1 ? "moment" : "moments"} remembered</small>
+            </article>
+          );
+        })}</div>
+      ) : <div className="empty-card summary-empty"><Icon name="sun" size={30} /><h2>Your daily story will appear here</h2><p>Memoria creates it as everyday moments collect.</p></div>}
     </section>
   );
 }
